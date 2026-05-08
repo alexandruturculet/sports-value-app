@@ -109,7 +109,7 @@ def get_team_goals(team_name):
     response = requests.get(url, headers=HEADERS)
     data = response.json()
 
-    if not data["response"]:
+    if not data.get("response"):
         return (0, 0)
 
     team_id = data["response"][0]["team"]["id"]
@@ -122,10 +122,22 @@ def get_team_goals(team_name):
     stats_response = requests.get(stats_url, headers=HEADERS)
     stats = stats_response.json()
 
-    if not stats["response"]:
+    # 🔥 DEBUG SAFETY
+    if not stats.get("response"):
         return (0, 0)
 
-    goals_for = stats["response"]["goals"]["for"]["total"]["total"]
-    goals_against = stats["response"]["goals"]["against"]["total"]["total"]
+    goals_data = stats["response"].get("goals", {})
+
+    goals_for = (
+        goals_data.get("for", {})
+        .get("total", {})
+        .get("total", 0)
+    )
+
+    goals_against = (
+        goals_data.get("against", {})
+        .get("total", {})
+        .get("total", 0)
+    )
 
     return (goals_for, goals_against)
