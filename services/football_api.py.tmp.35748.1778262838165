@@ -12,50 +12,6 @@ HEADERS = {
     "x-apisports-key": API_KEY
 }
 
-LEAGUE_API_CODES = {
-    "Premier League": 39,
-    "La Liga": 140,
-    "Serie A": 135
-}
-
-
-@st.cache_data(ttl=3600)
-def get_standings_for_leagues(leagues):
-    """Get standings for specified leagues"""
-    all_standings = {}
-
-    for league in leagues:
-        league_code = LEAGUE_API_CODES.get(league, 39)
-        standings = get_league_standings(league_code)
-        if standings:
-            all_standings[league] = standings
-
-    return all_standings
-
-
-def get_league_standings(league_code):
-    """Fetch standings for a specific league"""
-    url = (
-        "https://v3.football.api-sports.io/"
-        f"standings?league={league_code}&season=2024"
-    )
-
-    response = requests.get(
-        url,
-        headers=HEADERS
-    )
-
-    data = response.json()
-
-    if not data["response"]:
-        return []
-
-    standings = (
-        data["response"][0]["league"]["standings"][0]
-    )
-
-    return standings
-
 
 @st.cache_data(ttl=3600)
 def get_premier_league_standings():
@@ -82,8 +38,6 @@ def get_premier_league_standings():
     )
 
     return standings
-
-@st.cache_data(ttl=900)
 def get_team_form(team_name):
 
     url = (
@@ -146,8 +100,6 @@ def get_team_form(team_name):
             wins += 1
 
     return wins
-
-@st.cache_data(ttl=900)
 def get_team_goals(team_name):
 
     url = (
