@@ -70,10 +70,26 @@ def get_matches(leagues):
 # =========================
 
 with st.sidebar:
+
     leagues = st.multiselect(
-        "Leagues",
-        ["Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1"],
-        default=["Premier League"]
+        "Select leagues",
+        [
+            "Premier League",
+            "La Liga",
+            "Serie A",
+            "Bundesliga",
+            "Ligue 1",
+            "Liga Portugal",
+            "Eredivisie",
+            "Championship",
+            "Belgian Pro League"
+        ],
+
+        default=[
+            "Premier League",
+            "La Liga",
+            "Serie A"
+        ]
     )
 
 
