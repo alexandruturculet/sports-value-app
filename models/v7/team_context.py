@@ -18,71 +18,90 @@ def fetch_team_stats(team_name, league):
 
     for team in table:
 
-        if team["team"]["name"] == team_name:
+        # SAFETY: structure guard
+        if not isinstance(team, dict):
+            continue
 
-            played = team.get("playedGames", 1)
+        if "team" not in team:
+            continue
 
-            # SAFETY FIX (CRITICAL)
-            if played is None or played == 0:
-                played = 1
+        if team["team"].get("name") != team_name:
+            continue
 
-            goals_for = team.get("goalsFor", 1)
-            goals_against = team.get("goalsAgainst", 1)
+        played = team.get("playedGames", 1)
+        if played is None or played == 0:
+            played = 1
 
-            stats = {
-                "name": team_name,
+        goals_for = team.get("goalsFor", 1)
+        goals_against = team.get("goalsAgainst", 1)
 
-                # BASIC STATS
-                "position": team.get("position", 10),
-                "played": played,
+        points = team.get("points", 0)
 
-                "goals_for": goals_for,
-                "goals_against": goals_against,
+        stats = {
+            "name": team_name,
 
-                "won": team.get("won", 0),
-                "draw": team.get("draw", 0),
-                "lost": team.get("lost", 0),
+            # BASIC STATS
+            "position": team.get("position", 10),
+            "played": played,
 
-                "points": team.get("points", 0),
+            "goals_for": goals_for,
+            "goals_against": goals_against,
 
-                # NORMALIZED FEATURES (IMPORTANT FOR STABILITY)
-                "goals_for_pg": goals_for / played,
-                "goals_against_pg": goals_against / played,
-                "points_pg": team.get("points", 0) / played if played else 0,
+            "won": team.get("won", 0),
+            "draw": team.get("draw", 0),
+            "lost": team.get("lost", 0),
 
-                # REAL strength score (smoothed)
-                "strength": (
-                    (goals_for / played) * 2.0
-                    - (goals_against / played)
-                    + (team.get("points", 0) / played) * 1.2
-                ),
+            "points": points,
 
-                # optional debug
-                "raw_strength": (
-                    goals_for * 1.5
-                    - goals_against
-                    + team.get("points", 0) * 0.3
-                )
-            }
+            # PER GAME METRICS (IMPORTANT FOR V7 STABILITY)
+            "goals_for_pg": goals_for / played,
+            "goals_against_pg": goals_against / played,
+            "points_pg": points / played,
 
-            _cache[cache_key] = stats
+            # REALISTIC TEAM STRENGTH MODEL
+            "strength": (
+                (goals_for / played) * 2.0
+                - (goals_against / played)
+                + (points / played) * 1.2
+            ),
 
-            return stats
+            # DEBUG RAW SCORE (optional analysis)
+            "raw_strength": (
+                goals_for * 1.5
+                - goals_against
+                + points * 0.3
+            )
+        }
 
-    # SAFE fallback (VERY IMPORTANT FIX)
+        _cache[cache_key] = stats
+
+        return stats
+
+    # =========================
+    # SAFE FALLBACK (CRITICAL)
+    # =========================
+
     fallback = {
         "name": team_name,
+
+        "position": 10,
         "played": 1,
 
         "goals_for": 1,
         "goals_against": 1,
+
+        "won": 0,
+        "draw": 0,
+        "lost": 0,
+
+        "points": 0,
 
         "goals_for_pg": 1,
         "goals_against_pg": 1,
         "points_pg": 0,
 
         "strength": 1,
-        "points": 0
+        "raw_strength": 1
     }
 
     _cache[cache_key] = fallback
