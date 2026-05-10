@@ -19,7 +19,9 @@ LEAGUE_CODES = {
     "Bundesliga": "BL1",
     "Ligue 1": "FL1",
     "Liga Portugal": "PPL",
-    "Eredivisie": "DED"
+    "Eredivisie": "DED",
+    "Championship": "ELC",
+    "Belgian Pro League": "BSA"
 }
 
 BASE_URL = "https://api.football-data.org/v4"
