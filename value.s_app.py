@@ -46,14 +46,74 @@ st.title("V7 REAL EDGE ENGINE")
 
 st.markdown("""
 <style>
-@keyframes matchReveal {
-    0%   { opacity: 0; transform: translateY(-16px) scale(0.97); filter: blur(4px); }
-    60%  { opacity: 1; transform: translateY(3px)   scale(1.004); filter: blur(0); }
-    100% { opacity: 1; transform: translateY(0)     scale(1);    filter: blur(0); }
+@keyframes liquidPour {
+    0%   {
+        opacity: 0;
+        clip-path: polygon(4% 0%, 96% 0%, 95% 1%, 5% 1%);
+        filter: blur(10px) hue-rotate(220deg) saturate(8) brightness(3.5);
+        transform: translateY(-12px);
+    }
+    12%  {
+        opacity: 0.85;
+        clip-path: polygon(-1% 0%, 101% 0%, 107% 18%, -7% 12%);
+        filter: blur(7px) hue-rotate(160deg) saturate(5) brightness(2.2);
+        transform: translateY(-6px);
+    }
+    30%  {
+        clip-path: polygon(-5% 0%, 105% 0%, 112% 52%, -12% 42%);
+        filter: blur(3px) hue-rotate(90deg) saturate(3) brightness(1.6);
+        transform: translateY(-2px);
+    }
+    52%  {
+        opacity: 1;
+        clip-path: polygon(-7% 0%, 107% 0%, 105% 88%, -5% 78%);
+        filter: blur(1px) hue-rotate(28deg) saturate(1.9) brightness(1.25);
+        transform: translateY(0);
+    }
+    68%  {
+        clip-path: polygon(-2% 0%, 102% 0%, 102% 100%, -2% 100%);
+        filter: blur(0) hue-rotate(8deg) saturate(1.4) brightness(1.08);
+        transform: translateY(4px);
+    }
+    81%  {
+        clip-path: polygon(0.5% 0%, 99.5% 0%, 99% 100%, 1% 100%);
+        filter: blur(0) saturate(1.15) brightness(1.03);
+        transform: translateY(-1.5px);
+    }
+    91%  {
+        clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);
+        filter: saturate(1.04);
+        transform: translateY(0.8px);
+    }
+    100% {
+        opacity: 1;
+        clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);
+        filter: blur(0) hue-rotate(0deg) saturate(1) brightness(1);
+        transform: translateY(0);
+    }
 }
+
+@keyframes iridShimmer {
+    0%   { background-position: -100% 0; }
+    100% { background-position: 280% 0; }
+}
+
 [data-testid="stExpanderDetails"] {
-    animation: matchReveal 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation:
+        liquidPour 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+        iridShimmer 1.1s ease-out 0.08s forwards;
+    transform-origin: top center;
+    background: linear-gradient(
+        108deg,
+        transparent 15%,
+        rgba(64, 210, 255, 0.09) 36%,
+        rgba(200, 70, 255, 0.09) 50%,
+        rgba(50, 255, 180, 0.07) 64%,
+        transparent 84%
+    ) no-repeat;
+    background-size: 420% 100%;
 }
+
 [data-testid="stExpander"] summary:hover {
     background: rgba(255,255,255,0.04) !important;
     border-radius: 6px;
