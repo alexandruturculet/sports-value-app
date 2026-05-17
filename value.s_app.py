@@ -1,4 +1,5 @@
 import logging
+import os
 import streamlit as st
 from datetime import datetime, timedelta, timezone
 import pytz
@@ -11,35 +12,30 @@ from services.football_api import (
 )
 from models.v7.prediction_engine import generate_prediction
 from models.v7.ticket_engine import build_ticket
+from models.v7.match_preview import generate_preview
+from models.v7.top_players import get_top_player
+from services.player_images import get_player_image_url
 from models.data_normalizer import normalize_league, register_team_stats
 from models.team_strength_model import get_team_strength
 
 logging.basicConfig(level=logging.INFO)
 
-import os
 _FOOTBALL_DATA_KEY = os.getenv("football-data-api-key")
 if not _FOOTBALL_DATA_KEY:
     st.error(
-        "**API key missing.** Set `football-data-api-key` in Streamlit Cloud → Manage app → Settings → Secrets.",
+        "**API key missing.** Set `football-data-api-key` in Streamlit Cloud → "
+        "Manage app → Settings → Secrets.",
         icon="🔑",
     )
     st.stop()
 
 DISPLAY_TZ = pytz.timezone("Europe/Bucharest")
-
 MAX_MATCHES = 25
 REFRESH_COOLDOWN_SECONDS = 60
 
 ALL_LEAGUES = [
-    "Premier League",
-    "La Liga",
-    "Serie A",
-    "Bundesliga",
-    "Ligue 1",
-    "Liga Portugal",
-    "Eredivisie",
-    "Championship",
-    "Belgian Pro League",
+    "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
+    "Liga Portugal", "Eredivisie", "Championship", "Belgian Pro League",
 ]
 
 st.set_page_config(page_title="V7 EDGE ENGINE", layout="wide")
@@ -84,13 +80,10 @@ def get_matches(leagues: tuple):
         code = LEAGUE_CODES.get(league)
         if not code:
             continue
-
         url = f"{BASE_URL}/competitions/{code}/matches?dateFrom={today}&dateTo={next_week}"
         data = make_request(url)
-
         if not data or "matches" not in data:
             continue
-
         for m in data["matches"]:
             if m["status"] in ("SCHEDULED", "TIMED", "IN_PLAY", "LIVE"):
                 all_matches.append(m)
@@ -106,7 +99,6 @@ def cached_prediction(home: str, away: str, league: str, fixture_id):
 # ── Engine loop ───────────────────────────────────────────────────────────────
 
 standings = get_standings_for_leagues(leagues)
-# cache_data requires hashable args — convert list to tuple
 matches = get_matches(tuple(leagues))
 
 results = []
@@ -128,7 +120,6 @@ for m in matches:
     fixture_id = m.get("id")
 
     league_data = standings.get(league) or standings.get(m["competition"]["name"], [])
-
     home = get_team_strength(league_data, home_name)
     away = get_team_strength(league_data, away_name)
 
@@ -143,6 +134,8 @@ for m in matches:
         continue
 
     results.append({
+        "home": home_name,
+        "away": away_name,
         "match": f"{home_name} vs {away_name}",
         "kickoff": match_dt.strftime("%d-%m-%Y %H:%M %Z"),
         "prediction": prediction,
@@ -167,16 +160,51 @@ if not results:
 
 for r in results:
     is_fallback = r["breakdown"].get("is_fallback")
-    label = f"{r['match']} | {r['prediction']} ({round(r['confidence'], 2)}%)"
-    if is_fallback:
-        label += " ⚠ fallback data"
+    value_badge = " ✔ VALUE" if r["edge"].get("value_bet") else ""
+    label = f"{r['match']} | {r['prediction']} ({round(r['confidence'], 2)}%){value_badge}"
 
     with st.expander(label):
-        st.write("Kickoff:", r["kickoff"])
-        st.write(f"Prediction: {r['prediction']}")
-        st.write(f"Confidence: {round(r['confidence'], 2)}%")
-        st.write(f"EV: {round(r['edge'].get('ev', 0), 3)}")
-        st.write(f"Kelly: {round(r['edge'].get('kelly', 0), 3)}")
+
+        # ── Match preview text ────────────────────────────────────────────────
+        preview = generate_preview(
+            r["home"], r["away"], r["prediction"], r["breakdown"], r["confidence"]
+        )
+        st.markdown(f"_{preview}_")
+        st.divider()
+
+        # ── Best player cards ─────────────────────────────────────────────────
+        home_player, home_wiki = get_top_player(r["home"])
+        away_player, away_wiki = get_top_player(r["away"])
+
+        if home_player or away_player:
+            col_home, col_spacer, col_away = st.columns([2, 1, 2])
+
+            with col_home:
+                if home_player:
+                    st.caption(f"Key player — {r['home']}")
+                    st.markdown(f"**{home_player}**")
+                    img = get_player_image_url(home_wiki)
+                    if img:
+                        st.image(img, width=160)
+
+            with col_away:
+                if away_player:
+                    st.caption(f"Key player — {r['away']}")
+                    st.markdown(f"**{away_player}**")
+                    img = get_player_image_url(away_wiki)
+                    if img:
+                        st.image(img, width=160)
+
+            st.divider()
+
+        # ── Stats ─────────────────────────────────────────────────────────────
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Prediction", r["prediction"])
+        c2.metric("Confidence", f"{round(r['confidence'], 1)}%")
+        c3.metric("EV", round(r["edge"].get("ev", 0), 3))
+        c4.metric("Kelly", round(r["edge"].get("kelly", 0), 3))
+
+        st.write("**Kickoff:**", r["kickoff"])
 
         if is_fallback:
             st.warning("One or both teams used fallback stats — treat this pick with caution.")
@@ -184,7 +212,7 @@ for r in results:
         if r["edge"].get("value_bet"):
             st.success("VALUE BET")
         else:
-            st.warning("No edge")
+            st.warning("No edge detected")
 
         with st.expander("Model details"):
             st.json(r["breakdown"])
