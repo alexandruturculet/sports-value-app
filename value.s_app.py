@@ -463,6 +463,8 @@ def render_match_card(r: dict) -> None:
                     for inj in away_inj:
                         reason = inj.get("reason") or inj.get("type") or ""
                         st.write(f"❌ {inj['name']}" + (f" — *{reason}*" if reason else ""))
+        else:
+            st.caption("No pre-match injury report available for this fixture.")
 
         with st.expander("Model details"):
             st.json(r["breakdown"])
