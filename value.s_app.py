@@ -15,7 +15,8 @@ from models.v7.prediction_engine import generate_prediction
 from models.v7.ticket_engine import build_ticket
 from models.v7.match_preview import generate_preview
 from services.player_images import get_player_image_url
-from services.api_football import get_fixture_injuries, get_lineups_for_fixture, get_last_match_lineup_for_team
+from services.api_football import get_fixture_injuries
+from services.espn_api import get_espn_lineups, get_espn_last_lineup
 from models.data_normalizer import normalize_league, register_team_stats
 from models.team_strength_model import get_team_strength
 
@@ -166,19 +167,18 @@ upcoming_results = [r for r in results if r["kickoff_date"] > today_local]
 _LINEUP_EMPTY = {"home": {"lineup": [], "bench": []}, "away": {"lineup": [], "bench": []}}
 
 for r in today_results:
-    fi = get_lineups_for_fixture(r["home"], r["away"], r.get("kickoff_date_str", ""))
-    if fi["home"]["lineup"] and fi["away"]["lineup"]:
-        r["_lineup"] = {"home": fi["home"], "away": fi["away"]}
+    date_str = r.get("kickoff_date_str", "")
+    code = r.get("competition_code", "PL")
+    confirmed = get_espn_lineups(r["home"], r["away"], code, date_str)
+    if confirmed["home"]["lineup"] and confirmed["away"]["lineup"]:
+        r["_lineup"] = confirmed
         r["_probable"] = False
-    elif fi.get("home_id") and fi.get("away_id"):
-        home_last = get_last_match_lineup_for_team(fi["home_id"])
-        away_last = get_last_match_lineup_for_team(fi["away_id"])
+    else:
+        home_last = get_espn_last_lineup(r["home"], code)
+        away_last = get_espn_last_lineup(r["away"], code)
         r["_lineup"] = {"home": home_last, "away": away_last}
         r["_probable"] = bool(home_last["lineup"] or away_last["lineup"])
-    else:
-        r["_lineup"] = _LINEUP_EMPTY
-        r["_probable"] = False
-    r["_injuries"] = get_fixture_injuries(r["home"], r["away"], r.get("kickoff_date_str", ""))
+    r["_injuries"] = get_fixture_injuries(r["home"], r["away"], date_str)
 
 for r in upcoming_results:
     r["_lineup"] = _LINEUP_EMPTY
@@ -255,8 +255,8 @@ def render_match_card(r: dict) -> None:
         st.divider()
 
         # Key player cards — live data from scorers endpoint
-        home_player, home_wiki = get_top_scorer_for_team(r["home"], r["competition_code"])
-        away_player, away_wiki = get_top_scorer_for_team(r["away"], r["competition_code"])
+        home_player, home_wiki, home_goals, home_assists = get_top_scorer_for_team(r["home"], r["competition_code"])
+        away_player, away_wiki, away_goals, away_assists = get_top_scorer_for_team(r["away"], r["competition_code"])
 
         if home_player or away_player:
             col_home, col_spacer, col_away = st.columns([2, 1, 2])
@@ -264,7 +264,7 @@ def render_match_card(r: dict) -> None:
             with col_home:
                 if home_player:
                     st.caption(f"Top scorer — {r['home']}")
-                    st.markdown(f"**{home_player}**")
+                    st.markdown(f"**{home_player}**  \n{home_goals} goals · {home_assists} assists")
                     img = get_player_image_url(home_wiki)
                     if img:
                         st.image(img, width=160)
@@ -272,7 +272,7 @@ def render_match_card(r: dict) -> None:
             with col_away:
                 if away_player:
                     st.caption(f"Top scorer — {r['away']}")
-                    st.markdown(f"**{away_player}**")
+                    st.markdown(f"**{away_player}**  \n{away_goals} goals · {away_assists} assists")
                     img = get_player_image_url(away_wiki)
                     if img:
                         st.image(img, width=160)

@@ -78,13 +78,15 @@ def get_league_scorers(league_code: str) -> list:
 
 
 def get_top_scorer_for_team(team_name: str, competition_code: str) -> tuple:
-    """Return (player_name, player_name) for the team's leading scorer, or (None, None)."""
+    """Return (player_name, wiki_name, goals, assists) for the team's leading scorer."""
     scorers = get_league_scorers(competition_code)
     for entry in scorers:
         if entry.get("team", {}).get("name") == team_name:
             name = entry["player"]["name"]
-            return name, name
-    return None, None
+            goals = entry.get("goals", 0) or 0
+            assists = entry.get("assists", 0) or 0
+            return name, name, goals, assists
+    return None, None, 0, 0
 
 
 @st.cache_data(ttl=3600)
