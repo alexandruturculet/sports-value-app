@@ -7,8 +7,6 @@ import pytz
 from services.football_api import (
     get_standings_for_leagues,
     get_top_scorer_for_team,
-    get_match_lineup,
-    get_last_team_lineup,
     make_request,
     BASE_URL,
     LEAGUE_CODES,
@@ -17,7 +15,7 @@ from models.v7.prediction_engine import generate_prediction
 from models.v7.ticket_engine import build_ticket
 from models.v7.match_preview import generate_preview
 from services.player_images import get_player_image_url
-from services.api_football import get_fixture_injuries
+from services.api_football import get_fixture_injuries, get_lineups_for_fixture, get_last_match_lineup_for_team
 from models.data_normalizer import normalize_league, register_team_stats
 from models.team_strength_model import get_team_strength
 
@@ -165,31 +163,26 @@ upcoming_results = [r for r in results if r["kickoff_date"] > today_local]
 
 # ── Precompute lineup + injury data (all HTTP calls happen here, not inside expanders) ──
 
-_seen_fixture_ids: set = set()
-for r in results:
-    fid = r.get("fixture_id")
-    if fid not in _seen_fixture_ids:
-        _seen_fixture_ids.add(fid)
-        r["_lineup"] = get_match_lineup(fid)
-    else:
-        r["_lineup"] = get_match_lineup(fid)  # cached — instant
-
-    ld = r["_lineup"]
-    if not ld["home"]["lineup"] or not ld["away"]["lineup"]:
-        home_last = get_last_team_lineup(r["home"], r["competition_code"])
-        away_last = get_last_team_lineup(r["away"], r["competition_code"])
-        if home_last["lineup"] or away_last["lineup"]:
-            r["_lineup"] = {"home": home_last, "away": away_last}
-            r["_probable"] = True
-        else:
-            r["_probable"] = False
-    else:
-        r["_probable"] = False
+_LINEUP_EMPTY = {"home": {"lineup": [], "bench": []}, "away": {"lineup": [], "bench": []}}
 
 for r in today_results:
+    fi = get_lineups_for_fixture(r["home"], r["away"], r.get("kickoff_date_str", ""))
+    if fi["home"]["lineup"] and fi["away"]["lineup"]:
+        r["_lineup"] = {"home": fi["home"], "away": fi["away"]}
+        r["_probable"] = False
+    elif fi.get("home_id") and fi.get("away_id"):
+        home_last = get_last_match_lineup_for_team(fi["home_id"])
+        away_last = get_last_match_lineup_for_team(fi["away_id"])
+        r["_lineup"] = {"home": home_last, "away": away_last}
+        r["_probable"] = bool(home_last["lineup"] or away_last["lineup"])
+    else:
+        r["_lineup"] = _LINEUP_EMPTY
+        r["_probable"] = False
     r["_injuries"] = get_fixture_injuries(r["home"], r["away"], r.get("kickoff_date_str", ""))
 
 for r in upcoming_results:
+    r["_lineup"] = _LINEUP_EMPTY
+    r["_probable"] = False
     r["_injuries"] = {"home": [], "away": []}
 
 

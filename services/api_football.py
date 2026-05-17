@@ -100,6 +100,75 @@ def get_fixture_injuries(home_team: str, away_team: str, date_str: str) -> dict:
     return {"home": home_out, "away": away_out}
 
 
+_API_POS_MAP = {"G": "Goalkeeper", "D": "Defender", "M": "Midfielder", "F": "Forward"}
+
+
+def _parse_api_lineup(team_data: dict) -> dict:
+    def _p(entry):
+        pl = entry.get("player", {})
+        return {
+            "name": pl.get("name", ""),
+            "shirtNumber": pl.get("number") or "",
+            "position": _API_POS_MAP.get((pl.get("pos") or "").upper(), ""),
+        }
+    return {
+        "lineup": [_p(e) for e in team_data.get("startXI", [])],
+        "bench": [_p(e) for e in team_data.get("substitutes", [])],
+    }
+
+
+@st.cache_data(ttl=1800)
+def get_lineups_for_fixture(home_team: str, away_team: str, date_str: str) -> dict:
+    """Confirmed lineup + team IDs from API-Football for a fixture."""
+    _empty = {
+        "home": {"lineup": [], "bench": []},
+        "away": {"lineup": [], "bench": []},
+        "home_id": None,
+        "away_id": None,
+    }
+    fixture_row = None
+    for f in get_fixtures_for_date(date_str):
+        t = f.get("teams", {})
+        if (_names_match(home_team, t.get("home", {}).get("name", "")) and
+                _names_match(away_team, t.get("away", {}).get("name", ""))):
+            fixture_row = f
+            break
+    if not fixture_row:
+        return _empty
+
+    home_id = fixture_row["teams"]["home"]["id"]
+    away_id = fixture_row["teams"]["away"]["id"]
+    fixture_id = fixture_row["fixture"]["id"]
+
+    result = {
+        "home": {"lineup": [], "bench": []},
+        "away": {"lineup": [], "bench": []},
+        "home_id": home_id,
+        "away_id": away_id,
+    }
+    data = _get(f"{BASE_URL}/fixtures/lineups?fixture={fixture_id}")
+    for td in data.get("response", []):
+        side = "home" if td.get("team", {}).get("id") == home_id else "away"
+        result[side] = _parse_api_lineup(td)
+    return result
+
+
+@st.cache_data(ttl=86400)
+def get_last_match_lineup_for_team(team_id: int) -> dict:
+    """Last match lineup for a team from API-Football."""
+    _empty = {"lineup": [], "bench": []}
+    data = _get(f"{BASE_URL}/fixtures?team={team_id}&last=1")
+    fixtures = data.get("response", [])
+    if not fixtures:
+        return _empty
+    last_fid = fixtures[0]["fixture"]["id"]
+    lineup_data = _get(f"{BASE_URL}/fixtures/lineups?fixture={last_fid}")
+    for td in lineup_data.get("response", []):
+        if td.get("team", {}).get("id") == team_id:
+            return _parse_api_lineup(td)
+    return _empty
+
+
 # ── Stubs kept for context_engine compatibility ───────────────────────────────
 
 def get_lineups(team_name: str, fixture_id) -> dict:
