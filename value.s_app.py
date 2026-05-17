@@ -208,28 +208,30 @@ def _player_dot(p: dict, bg: str) -> str:
     num = str(p.get("shirtNumber", "")) or "?"
     name = _short_name(p.get("name", ""))
     return (
-        f'<div style="display:flex;flex-direction:column;align-items:center;margin:3px 0;">'
-        f'<div style="background:{bg};color:#111;border-radius:50%;width:34px;height:34px;'
-        f'display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;'
-        f'box-shadow:0 2px 5px rgba(0,0,0,0.5);">{num}</div>'
-        f'<span style="color:#fff;font-size:9px;text-align:center;width:44px;white-space:nowrap;'
-        f'overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px rgba(0,0,0,0.9);'
-        f'margin-top:2px;">{name}</span>'
-        f'</div>'
+        '<div style="display:flex;flex-direction:column;align-items:center;margin:0 5px;">'
+        f'<div style="background:{bg};color:#111;border-radius:50%;width:30px;height:30px;'
+        f'display:flex;align-items:center;justify-content:center;font-weight:700;font-size:10px;'
+        f'box-shadow:0 2px 4px rgba(0,0,0,0.5);">{num}</div>'
+        f'<span style="color:#fff;font-size:8.5px;text-align:center;width:38px;white-space:nowrap;'
+        f'overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.9);margin-top:2px;">{name}</span>'
+        '</div>'
     )
 
 
-def _pos_column(players: list, bg: str) -> str:
-    inner = "".join(_player_dot(p, bg) for p in players)
-    return (
-        f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;'
-        f'justify-content:space-around;padding:0 2px;">{inner}</div>'
-    )
+def _pos_row(players: list, bg: str) -> str:
+    if not players:
+        return ""
+    dots = "".join(_player_dot(p, bg) for p in players)
+    return f'<div style="display:flex;justify-content:center;flex-wrap:wrap;padding:5px 4px;">{dots}</div>'
 
 
 def _infer_formation(groups: dict) -> str:
-    parts = [str(len(groups.get(k, []))) for k in ("DEF", "MID", "FWD") if groups.get(k)]
-    return "-".join(parts)
+    d = len(groups.get("DEF", []))
+    m = len(groups.get("MID", []))
+    f = len(groups.get("FWD", []))
+    if 2 <= d <= 5 and 2 <= m <= 6 and 1 <= f <= 4:
+        return f"{d}-{m}-{f}"
+    return ""
 
 
 def _render_pitch(home_name: str, home_xi: list, away_name: str, away_xi: list, probable: bool) -> None:
@@ -246,44 +248,48 @@ def _render_pitch(home_name: str, home_xi: list, away_name: str, away_xi: list, 
     h_form = _infer_formation(hg)
     a_form = _infer_formation(ag)
 
-    if home_xi:
-        home_cols = "".join(
-            _pos_column(hg[pos], "#e8e8e8")
-            for pos in ("GK", "DEF", "MID", "FWD") if hg.get(pos)
-        )
-    else:
-        home_cols = ('<div style="flex:1;display:flex;align-items:center;justify-content:center;'
-                     'color:rgba(255,255,255,0.4);font-size:12px;">Not announced</div>')
-
+    # Away team: GK at top of pitch → FWD closest to center
     if away_xi:
-        away_cols = "".join(
-            _pos_column(ag[pos], "#ffd080")
-            for pos in ("FWD", "MID", "DEF", "GK") if ag.get(pos)
+        away_rows = "".join(_pos_row(ag.get(pos, []), "#ffd080") for pos in ("GK", "DEF", "MID", "FWD"))
+        a_header = (
+            f'<div style="font-size:11px;color:#ffd080;font-weight:600;padding:0 4px 3px;">'
+            f'{away_name}'
+            + (f'&nbsp;<span style="color:rgba(255,255,255,0.38);font-weight:400;">{a_form}</span>' if a_form else "")
+            + '</div>'
         )
     else:
-        away_cols = ('<div style="flex:1;display:flex;align-items:center;justify-content:center;'
-                     'color:rgba(255,255,255,0.4);font-size:12px;">Not announced</div>')
+        away_rows = '<div style="display:flex;align-items:center;justify-content:center;padding:14px;color:rgba(255,255,255,0.38);font-size:12px;">Lineup not yet announced</div>'
+        a_header = f'<div style="font-size:11px;color:#ffd080;font-weight:600;padding:0 4px 3px;">{away_name}</div>'
+
+    # Home team: FWD closest to center → GK at bottom of pitch
+    if home_xi:
+        home_rows = "".join(_pos_row(hg.get(pos, []), "#e8e8e8") for pos in ("FWD", "MID", "DEF", "GK"))
+        h_footer = (
+            f'<div style="font-size:11px;color:#eee;font-weight:600;text-align:right;padding:3px 4px 0;">'
+            + (f'<span style="color:rgba(255,255,255,0.38);font-weight:400;">{h_form}</span>&nbsp;' if h_form else "")
+            + f'{home_name}</div>'
+        )
+    else:
+        home_rows = '<div style="display:flex;align-items:center;justify-content:center;padding:14px;color:rgba(255,255,255,0.38);font-size:12px;">Lineup not yet announced</div>'
+        h_footer = f'<div style="font-size:11px;color:#eee;font-weight:600;text-align:right;padding:3px 4px 0;">{home_name}</div>'
+
+    center_line = (
+        '<div style="display:flex;align-items:center;margin:3px 0;">'
+        '<div style="flex:1;height:1px;background:rgba(255,255,255,0.18);"></div>'
+        '<div style="margin:0 10px;width:18px;height:18px;border-radius:50%;'
+        'border:1px solid rgba(255,255,255,0.18);flex-shrink:0;"></div>'
+        '<div style="flex:1;height:1px;background:rgba(255,255,255,0.18);"></div>'
+        '</div>'
+    )
 
     html = (
-        '<div style="background:linear-gradient(135deg,#256d25 0%,#1a5218 100%);'
-        'border-radius:10px;padding:10px 8px 8px;font-family:\'Segoe UI\',Arial,sans-serif;'
-        'border:1px solid rgba(255,255,255,0.12);margin-bottom:6px;">'
-
-        '<div style="display:flex;justify-content:space-between;margin-bottom:6px;'
-        'font-size:11px;color:rgba(255,255,255,0.6);padding:0 2px;">'
-        f'<div><span style="color:#eee;font-weight:600;">{home_name}</span>'
-        f'{"&nbsp;<span style=\'color:rgba(255,255,255,0.38);\'>" + h_form + "</span>" if h_form else ""}</div>'
-        f'<span style="font-size:10px;">{label}</span>'
-        f'<div>{"<span style=\'color:rgba(255,255,255,0.38);\'>" + a_form + "</span>&nbsp;" if a_form else ""}'
-        f'<span style="color:#eee;font-weight:600;">{away_name}</span></div>'
-        '</div>'
-
-        '<div style="display:flex;height:230px;position:relative;">'
-        '<div style="position:absolute;left:50%;top:0;bottom:0;width:1px;'
-        'background:rgba(255,255,255,0.2);transform:translateX(-50%);"></div>'
-        f'<div style="flex:1;display:flex;padding-right:4px;">{home_cols}</div>'
-        f'<div style="flex:1;display:flex;padding-left:4px;">{away_cols}</div>'
-        '</div>'
+        '<div style="background:linear-gradient(180deg,#256d25 0%,#1a5218 100%);'
+        'border-radius:10px;padding:8px 6px;font-family:\'Segoe UI\',Arial,sans-serif;'
+        'border:1px solid rgba(255,255,255,0.10);margin-bottom:6px;">'
+        f'<div style="text-align:center;font-size:10px;color:rgba(255,255,255,0.45);margin-bottom:6px;">{label}</div>'
+        f'{a_header}{away_rows}'
+        f'{center_line}'
+        f'{home_rows}{h_footer}'
         '</div>'
     )
     st.markdown(html, unsafe_allow_html=True)
