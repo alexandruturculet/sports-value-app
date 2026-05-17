@@ -7,6 +7,7 @@ import pytz
 from services.football_api import (
     get_standings_for_leagues,
     get_top_scorer_for_team,
+    get_match_lineup,
     make_request,
     BASE_URL,
     LEAGUE_CODES,
@@ -15,6 +16,7 @@ from models.v7.prediction_engine import generate_prediction
 from models.v7.ticket_engine import build_ticket
 from models.v7.match_preview import generate_preview
 from services.player_images import get_player_image_url
+from services.api_football import get_fixture_injuries
 from models.data_normalizer import normalize_league, register_team_stats
 from models.team_strength_model import get_team_strength
 
@@ -141,7 +143,9 @@ for m in matches:
         "match": f"{home_name} vs {away_name}",
         "kickoff": match_dt.strftime("%d-%m-%Y %H:%M %Z"),
         "kickoff_date": match_dt.date(),
+        "kickoff_date_str": match_dt.date().isoformat(),
         "competition_code": competition_code,
+        "fixture_id": fixture_id,
         "prediction": prediction,
         "confidence": confidence,
         "reason": reason,
@@ -159,6 +163,55 @@ upcoming_results = [r for r in results if r["kickoff_date"] > today_local]
 
 
 # ── Render helper ─────────────────────────────────────────────────────────────
+
+_POS_GROUP = {
+    "Goalkeeper": "GK", "Keeper": "GK",
+    "Defender": "DEF", "Centre-Back": "DEF", "Right-Back": "DEF", "Left-Back": "DEF",
+    "Midfielder": "MID", "Defensive Midfield": "MID", "Central Midfield": "MID",
+    "Attacking Midfield": "MID", "Right Midfield": "MID", "Left Midfield": "MID",
+    "Forward": "FWD", "Attacker": "FWD", "Winger": "FWD",
+    "Centre-Forward": "FWD", "Left Winger": "FWD", "Right Winger": "FWD",
+    "Striker": "FWD",
+}
+_POS_ORDER = ["GK", "DEF", "MID", "FWD"]
+
+
+def _render_team_xi(col, team_name: str, lineup: list, bench: list, injuries: list) -> None:
+    with col:
+        st.markdown(f"**{team_name}**")
+        if lineup:
+            groups: dict = {}
+            for p in lineup:
+                key = _POS_GROUP.get(p.get("position", ""), "MID")
+                groups.setdefault(key, []).append(p)
+            for pos in _POS_ORDER:
+                if pos not in groups:
+                    continue
+                st.caption(pos)
+                for p in groups[pos]:
+                    num = p.get("shirtNumber", "")
+                    name = p.get("name", "")
+                    st.write(f"#{num} {name}" if num else f"• {name}")
+            if bench:
+                st.caption("BENCH")
+                for p in bench[:7]:
+                    num = p.get("shirtNumber", "")
+                    name = p.get("name", "")
+                    st.write(f"_{('#' + str(num) + ' ') if num else ''}{name}_")
+        else:
+            st.caption("Lineup not yet announced")
+
+        if injuries:
+            st.markdown("**Absents / Injuries**")
+            for inj in injuries:
+                reason = inj.get("reason") or inj.get("type") or ""
+                line = f"❌ {inj['name']}"
+                if reason:
+                    line += f" — *{reason}*"
+                st.write(line)
+        else:
+            st.caption("No injury reports available")
+
 
 def render_match_card(r: dict) -> None:
     is_fallback = r["breakdown"].get("is_fallback")
@@ -217,59 +270,16 @@ def render_match_card(r: dict) -> None:
 
         # Starting XI + Absents
         st.divider()
-        ctx = r["breakdown"].get("context", {})
-        home_ctx = ctx.get("home", {})
-        away_ctx = ctx.get("away", {})
-
-        home_confirmed = home_ctx.get("confirmed", [])
-        away_confirmed = away_ctx.get("confirmed", [])
-        home_lineup = home_ctx.get("lineup", [])
-        away_lineup = away_ctx.get("lineup", [])
-        home_injuries = home_ctx.get("injuries", [])
-        away_injuries = away_ctx.get("injuries", [])
-
-        st.markdown("**Probable Starting XI**")
+        st.markdown("**Starting XI & Absents**")
+        lineup_data = get_match_lineup(r.get("fixture_id"))
+        injuries = get_fixture_injuries(r["home"], r["away"], r.get("kickoff_date_str", ""))
         xi_home, xi_away = st.columns(2)
-
-        def _render_xi(col, team_name, confirmed, lineup, injuries):
-            with col:
-                st.markdown(f"**{team_name}**")
-                # API-Football confirmed lineup format
-                shown = False
-                for entry in confirmed:
-                    if not isinstance(entry, dict):
-                        continue
-                    start_xi = entry.get("startXI", [])
-                    if not start_xi:
-                        continue
-                    shown = True
-                    formation = entry.get("formation", "")
-                    if formation:
-                        st.caption(f"Formation: {formation}")
-                    for slot in start_xi:
-                        pl = slot.get("player", {})
-                        num = pl.get("number", "")
-                        name = pl.get("name", "")
-                        pos = pl.get("pos", "")
-                        st.write(f"{num}. {name}" + (f" ({pos})" if pos else ""))
-                if not shown:
-                    if lineup:
-                        for name in lineup:
-                            st.write(f"• {name}")
-                    else:
-                        st.caption("Lineup not yet announced")
-
-                if injuries:
-                    st.markdown("**Absents / Injuries:**")
-                    for inj in injuries:
-                        pl_name = inj.get("player", {}).get("name", "Unknown") if isinstance(inj, dict) else str(inj)
-                        reason = inj.get("injury", {}).get("reason", "") if isinstance(inj, dict) else ""
-                        st.write(f"❌ {pl_name}" + (f" — {reason}" if reason else ""))
-                else:
-                    st.caption("No injury reports available")
-
-        _render_xi(xi_home, r["home"], home_confirmed, home_lineup, home_injuries)
-        _render_xi(xi_away, r["away"], away_confirmed, away_lineup, away_injuries)
+        _render_team_xi(xi_home, r["home"],
+                        lineup_data["home"]["lineup"], lineup_data["home"]["bench"],
+                        injuries["home"])
+        _render_team_xi(xi_away, r["away"],
+                        lineup_data["away"]["lineup"], lineup_data["away"]["bench"],
+                        injuries["away"])
 
         with st.expander("Model details"):
             st.json(r["breakdown"])

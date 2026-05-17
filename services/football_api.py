@@ -131,6 +131,24 @@ def get_premier_league_standings():
     return get_league_standings("PL")
 
 
+@st.cache_data(ttl=1800)
+def get_match_lineup(fixture_id) -> dict:
+    """Return confirmed lineup from football-data.org /matches/{id} endpoint."""
+    _empty = {"home": {"lineup": [], "bench": []}, "away": {"lineup": [], "bench": []}}
+    if not fixture_id:
+        return _empty
+    url = f"{BASE_URL}/matches/{fixture_id}"
+    data = make_request(url)
+    if not data:
+        return _empty
+    home = data.get("homeTeam", {})
+    away = data.get("awayTeam", {})
+    return {
+        "home": {"lineup": home.get("lineup", []), "bench": home.get("bench", [])},
+        "away": {"lineup": away.get("lineup", []), "bench": away.get("bench", [])},
+    }
+
+
 @st.cache_data(ttl=3600)
 def get_team_form(team_name: str):
     for league_code in _SEARCH_LEAGUES:
