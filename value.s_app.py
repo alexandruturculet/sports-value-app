@@ -44,6 +44,24 @@ ALL_LEAGUES = [
 st.set_page_config(page_title="V7 EDGE ENGINE", layout="wide")
 st.title("V7 REAL EDGE ENGINE")
 
+st.markdown("""
+<style>
+@keyframes matchReveal {
+    0%   { opacity: 0; transform: translateY(-16px) scale(0.97); filter: blur(4px); }
+    60%  { opacity: 1; transform: translateY(3px)   scale(1.004); filter: blur(0); }
+    100% { opacity: 1; transform: translateY(0)     scale(1);    filter: blur(0); }
+}
+[data-testid="stExpanderDetails"] {
+    animation: matchReveal 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+[data-testid="stExpander"] summary:hover {
+    background: rgba(255,255,255,0.04) !important;
+    border-radius: 6px;
+    transition: background 0.2s;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
@@ -142,7 +160,7 @@ for m in matches:
         "home": home_name,
         "away": away_name,
         "match": f"{home_name} vs {away_name}",
-        "kickoff": match_dt.strftime("%d-%m-%Y %H:%M %Z"),
+        "kickoff": match_dt.strftime("%d-%m-%Y %H:%M") + " (Romania)",
         "kickoff_date": match_dt.date(),
         "kickoff_date_str": match_dt.date().isoformat(),
         "competition_code": competition_code,
@@ -464,7 +482,7 @@ def render_match_card(r: dict) -> None:
                         reason = inj.get("reason") or inj.get("type") or ""
                         st.write(f"❌ {inj['name']}" + (f" — *{reason}*" if reason else ""))
         else:
-            st.caption("No pre-match injury report available for this fixture.")
+            st.caption("No injury data found. Reports are typically available 24–48 h before kickoff via API-Football; ESPN does not publish structured soccer injury lists.")
 
         with st.expander("Model details"):
             st.json(r["breakdown"])
