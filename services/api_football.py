@@ -11,6 +11,16 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://v3.football.api-sports.io"
 
+_LEAGUE_IDS = {
+    "PL": 39, "PD": 140, "SA": 135, "BL1": 78,
+    "FL1": 61, "PPL": 94, "DED": 88, "ELC": 40, "BSA": 144,
+}
+
+def _current_season() -> int:
+    from datetime import date
+    today = date.today()
+    return today.year - 1 if today.month < 7 else today.year
+
 
 def _get_key() -> str | None:
     """Read API key at call time so Streamlit secrets are always available."""
@@ -59,14 +69,31 @@ def _names_match(n1: str, n2: str) -> bool:
 
 @st.cache_data(ttl=3600)
 def get_fixtures_for_date(date_str: str) -> list:
-    """One call per date — returns all API-Football fixtures for that day."""
+    """All API-Football fixtures for a date (global, no league filter)."""
     data = _get(f"{BASE_URL}/fixtures?date={date_str}")
     return data.get("response", [])
 
 
-def find_api_fixture_id(home_team: str, away_team: str, date_str: str) -> int | None:
+@st.cache_data(ttl=3600)
+def get_fixtures_for_date_league(date_str: str, competition_code: str) -> list:
+    """API-Football fixtures filtered by league — fewer results, better matching."""
+    league_id = _LEAGUE_IDS.get(competition_code)
+    if not league_id:
+        return get_fixtures_for_date(date_str)
+    season = _current_season()
+    data = _get(f"{BASE_URL}/fixtures?date={date_str}&league={league_id}&season={season}")
+    return data.get("response", [])
+
+
+def find_api_fixture_id(home_team: str, away_team: str, date_str: str,
+                        competition_code: str = "") -> int | None:
     """Match football-data.org team names to an API-Football fixture ID."""
-    for fixture in get_fixtures_for_date(date_str):
+    fixtures = (
+        get_fixtures_for_date_league(date_str, competition_code)
+        if competition_code else
+        get_fixtures_for_date(date_str)
+    )
+    for fixture in fixtures:
         teams = fixture.get("teams", {})
         api_home = teams.get("home", {}).get("name", "")
         api_away = teams.get("away", {}).get("name", "")
@@ -76,9 +103,10 @@ def find_api_fixture_id(home_team: str, away_team: str, date_str: str) -> int | 
 
 
 @st.cache_data(ttl=1800)
-def get_fixture_injuries(home_team: str, away_team: str, date_str: str) -> dict:
+def get_fixture_injuries(home_team: str, away_team: str, date_str: str,
+                         competition_code: str = "") -> dict:
     """Return {"home": [...], "away": [...]} absent-player lists for a fixture."""
-    fixture_id = find_api_fixture_id(home_team, away_team, date_str)
+    fixture_id = find_api_fixture_id(home_team, away_team, date_str, competition_code)
     if not fixture_id:
         return {"home": [], "away": []}
 

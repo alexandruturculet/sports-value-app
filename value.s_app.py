@@ -181,14 +181,22 @@ for r in today_results:
         away_last = get_espn_last_lineup(r["away"], code)
         r["_lineup"] = {"home": home_last, "away": away_last}
         r["_probable"] = bool(home_last["lineup"] or away_last["lineup"])
-    r["_injuries"] = get_fixture_injuries(r["home"], r["away"], date_str)
+    r["_injuries"] = get_fixture_injuries(r["home"], r["away"], date_str, code)
     if not r["_injuries"]["home"] and not r["_injuries"]["away"]:
         r["_injuries"] = get_espn_injuries(r["home"], r["away"], code, date_str)
 
+_tomorrow_str = (today_local + timedelta(days=2)).isoformat()
 for r in upcoming_results:
     r["_lineup"] = _LINEUP_EMPTY
     r["_probable"] = False
-    r["_injuries"] = {"home": [], "away": []}
+    date_str = r.get("kickoff_date_str", "")
+    code = r.get("competition_code", "PL")
+    if date_str <= _tomorrow_str:
+        r["_injuries"] = get_fixture_injuries(r["home"], r["away"], date_str, code)
+        if not r["_injuries"]["home"] and not r["_injuries"]["away"]:
+            r["_injuries"] = get_espn_injuries(r["home"], r["away"], code, date_str)
+    else:
+        r["_injuries"] = {"home": [], "away": []}
 
 
 # ── Render helpers ────────────────────────────────────────────────────────────
@@ -383,10 +391,10 @@ def render_match_card(r: dict) -> None:
                     continue
                 img_url = get_player_image_url(wiki)
                 img_el = (
-                    f'<img src="{img_url}" style="width:56px;height:56px;border-radius:50%;'
+                    f'<img src="{img_url}" style="width:72px;height:72px;border-radius:50%;'
                     f'object-fit:cover;flex-shrink:0;">'
                     if img_url else
-                    '<div style="width:56px;height:56px;border-radius:50%;background:#2a2a2a;flex-shrink:0;"></div>'
+                    '<div style="width:72px;height:72px;border-radius:50%;background:#2a2a2a;flex-shrink:0;"></div>'
                 )
                 cards_html.append(
                     f'<div style="flex:1 1 180px;display:flex;align-items:center;gap:10px;padding:10px 14px;'

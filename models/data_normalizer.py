@@ -1,11 +1,12 @@
 # models/data_normalizer.py
 
 LEAGUE_MAP = {
-    "Premier League": "Premier League",
-    "La Liga": "Primera Division",
-    "Serie A": "Serie A",
-    "Bundesliga": "Bundesliga",
-    "Ligue 1": "Ligue 1"
+    # football-data.org returns these API names; map to sidebar display names
+    "Primera Division": "La Liga",
+    "Primeira Liga": "Liga Portugal",
+    # Ensure display names pass through unchanged even if used directly
+    "La Liga": "La Liga",
+    "Liga Portugal": "Liga Portugal",
 }
 
 
