@@ -160,7 +160,7 @@ def get_recent_finished_matches(competition_code: str) -> list:
 
 @st.cache_data(ttl=3600)
 def get_last_team_lineup(team_name: str, competition_code: str) -> dict:
-    """Last confirmed lineup for a team — used as probable XI before official announcement."""
+    """Last confirmed lineup for a team — exactly ONE get_match_lineup call."""
     _empty = {"lineup": [], "bench": []}
     finished = get_recent_finished_matches(competition_code)
     for match in reversed(finished):
@@ -173,9 +173,7 @@ def get_last_team_lineup(team_name: str, competition_code: str) -> dict:
             continue
         detail = get_match_lineup(fid)
         side = "home" if home == team_name else "away"
-        result = detail.get(side, _empty)
-        if result.get("lineup"):
-            return result
+        return detail.get(side, _empty)  # return immediately — no loop over all matches
     return _empty
 
 

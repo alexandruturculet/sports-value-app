@@ -163,6 +163,36 @@ today_results = [r for r in results if r["kickoff_date"] == today_local]
 upcoming_results = [r for r in results if r["kickoff_date"] > today_local]
 
 
+# ── Precompute lineup + injury data (all HTTP calls happen here, not inside expanders) ──
+
+_seen_fixture_ids: set = set()
+for r in results:
+    fid = r.get("fixture_id")
+    if fid not in _seen_fixture_ids:
+        _seen_fixture_ids.add(fid)
+        r["_lineup"] = get_match_lineup(fid)
+    else:
+        r["_lineup"] = get_match_lineup(fid)  # cached — instant
+
+    ld = r["_lineup"]
+    if not ld["home"]["lineup"] or not ld["away"]["lineup"]:
+        home_last = get_last_team_lineup(r["home"], r["competition_code"])
+        away_last = get_last_team_lineup(r["away"], r["competition_code"])
+        if home_last["lineup"] or away_last["lineup"]:
+            r["_lineup"] = {"home": home_last, "away": away_last}
+            r["_probable"] = True
+        else:
+            r["_probable"] = False
+    else:
+        r["_probable"] = False
+
+for r in today_results:
+    r["_injuries"] = get_fixture_injuries(r["home"], r["away"], r.get("kickoff_date_str", ""))
+
+for r in upcoming_results:
+    r["_injuries"] = {"home": [], "away": []}
+
+
 # ── Render helper ─────────────────────────────────────────────────────────────
 
 _POS_GROUP = {
@@ -273,19 +303,12 @@ def render_match_card(r: dict) -> None:
         else:
             st.warning("No edge detected")
 
-        # Starting XI + Absents
+        # Starting XI + Absents  (data pre-fetched before render loop)
         st.divider()
         st.markdown("**Starting XI & Absents**")
-        lineup_data = get_match_lineup(r.get("fixture_id"))
-        probable = False
-        # Official lineup not released yet — use last-match lineup as probable XI
-        if not lineup_data["home"]["lineup"] or not lineup_data["away"]["lineup"]:
-            home_last = get_last_team_lineup(r["home"], r["competition_code"])
-            away_last = get_last_team_lineup(r["away"], r["competition_code"])
-            if home_last["lineup"] or away_last["lineup"]:
-                lineup_data = {"home": home_last, "away": away_last}
-                probable = True
-        injuries = get_fixture_injuries(r["home"], r["away"], r.get("kickoff_date_str", ""))
+        lineup_data = r["_lineup"]
+        probable = r["_probable"]
+        injuries = r["_injuries"]
         xi_home, xi_away = st.columns(2)
         _render_team_xi(xi_home, r["home"],
                         lineup_data["home"]["lineup"], lineup_data["home"]["bench"],
