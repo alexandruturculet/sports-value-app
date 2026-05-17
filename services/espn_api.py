@@ -103,6 +103,46 @@ def get_espn_lineups(home_team: str, away_team: str, league_code: str, date_str:
     return _empty
 
 
+@st.cache_data(ttl=1800)
+def get_espn_injuries(home_team: str, away_team: str, league_code: str, date_str: str) -> dict:
+    """Extract injured/absent players from ESPN roster data for a fixture."""
+    _empty = {"home": [], "away": []}
+    slug = _SLUGS.get(league_code)
+    if not slug:
+        return _empty
+    ymd = date_str.replace("-", "")
+    for event in _scoreboard(slug, ymd):
+        comps = event.get("competitions", [{}])
+        competitors = comps[0].get("competitors", []) if comps else []
+        h = next((c["team"]["name"] for c in competitors if c.get("homeAway") == "home"), "")
+        a = next((c["team"]["name"] for c in competitors if c.get("homeAway") == "away"), "")
+        if _match(home_team, h) and _match(away_team, a):
+            data = _summary(slug, event["id"])
+            home_out, away_out = [], []
+            for entry in data.get("rosters", []):
+                side = entry.get("homeAway", "")
+                if side not in ("home", "away"):
+                    continue
+                out = home_out if side == "home" else away_out
+                for athlete in entry.get("roster", []):
+                    if athlete.get("injured") or not athlete.get("active", True):
+                        pl = athlete.get("athlete", {})
+                        injury = athlete.get("injury") or {}
+                        reason = (
+                            injury.get("type", {}).get("text", "")
+                            or injury.get("description", "")
+                            or "Unavailable"
+                        )
+                        out.append({
+                            "name": pl.get("displayName", "Unknown"),
+                            "type": "injury" if athlete.get("injured") else "unavailable",
+                            "reason": reason,
+                        })
+            if home_out or away_out:
+                return {"home": home_out, "away": away_out}
+    return _empty
+
+
 @st.cache_data(ttl=86400)
 def get_espn_last_lineup(team_name: str, league_code: str) -> dict:
     """Probable XI from team's most recent match via ESPN (looks back up to 7 days)."""

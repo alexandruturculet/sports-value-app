@@ -27,19 +27,22 @@ def _get_client():
 
 
 def save_ticket(picks: list, avg_confidence: float, date_str: str) -> bool:
-    """Upsert today's ticket (safe to call on every page load)."""
+    """Insert today's ticket only if one doesn't already exist for this date."""
     client = _get_client()
     if not client:
         return False
     try:
-        client.table("tickets").upsert(
+        existing = client.table("tickets").select("id").eq("date", date_str).execute()
+        if existing.data:
+            logger.info("Ticket for %s already exists — skipping save.", date_str)
+            return False
+        client.table("tickets").insert(
             {
                 "date": date_str,
                 "picks": picks,
                 "avg_confidence": avg_confidence,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
-            },
-            on_conflict="date",
+            }
         ).execute()
         return True
     except Exception as e:

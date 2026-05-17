@@ -16,7 +16,7 @@ from models.v7.ticket_engine import build_ticket
 from models.v7.match_preview import generate_preview
 from services.player_images import get_player_image_url
 from services.api_football import get_fixture_injuries
-from services.espn_api import get_espn_lineups, get_espn_last_lineup
+from services.espn_api import get_espn_lineups, get_espn_last_lineup, get_espn_injuries
 from services.supabase_client import save_ticket, get_all_tickets, update_ticket_result
 from models.data_normalizer import normalize_league, register_team_stats
 from models.team_strength_model import get_team_strength
@@ -182,6 +182,8 @@ for r in today_results:
         r["_lineup"] = {"home": home_last, "away": away_last}
         r["_probable"] = bool(home_last["lineup"] or away_last["lineup"])
     r["_injuries"] = get_fixture_injuries(r["home"], r["away"], date_str)
+    if not r["_injuries"]["home"] and not r["_injuries"]["away"]:
+        r["_injuries"] = get_espn_injuries(r["home"], r["away"], code, date_str)
 
 for r in upcoming_results:
     r["_lineup"] = _LINEUP_EMPTY
@@ -366,29 +368,42 @@ def render_match_card(r: dict) -> None:
         st.markdown(f"_{preview}_")
         st.divider()
 
-        # Key player cards — live data from scorers endpoint
+        # Key player cards — compact inline scorer strip
         home_player, home_wiki, home_goals, home_assists = get_top_scorer_for_team(r["home"], r["competition_code"])
         away_player, away_wiki, away_goals, away_assists = get_top_scorer_for_team(r["away"], r["competition_code"])
 
         if home_player or away_player:
-            col_home, col_spacer, col_away = st.columns([2, 1, 2])
-
-            with col_home:
-                if home_player:
-                    st.caption(f"Top scorer — {r['home']}")
-                    st.markdown(f"**{home_player}**  \n{home_goals} goals · {home_assists} assists")
-                    img = get_player_image_url(home_wiki)
-                    if img:
-                        st.image(img, width=160)
-
-            with col_away:
-                if away_player:
-                    st.caption(f"Top scorer — {r['away']}")
-                    st.markdown(f"**{away_player}**  \n{away_goals} goals · {away_assists} assists")
-                    img = get_player_image_url(away_wiki)
-                    if img:
-                        st.image(img, width=160)
-
+            cards_html = []
+            for player, wiki, goals, assists, team in [
+                (home_player, home_wiki, home_goals, home_assists, r["home"]),
+                (away_player, away_wiki, away_goals, away_assists, r["away"]),
+            ]:
+                if not player:
+                    continue
+                img_url = get_player_image_url(wiki)
+                img_el = (
+                    f'<img src="{img_url}" style="width:42px;height:42px;border-radius:50%;'
+                    f'object-fit:cover;flex-shrink:0;">'
+                    if img_url else
+                    '<div style="width:42px;height:42px;border-radius:50%;background:#2a2a2a;flex-shrink:0;"></div>'
+                )
+                cards_html.append(
+                    f'<div style="flex:1;display:flex;align-items:center;gap:10px;padding:9px 12px;'
+                    f'border-radius:8px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);">'
+                    f'{img_el}'
+                    f'<div style="min-width:0;">'
+                    f'<div style="font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.5px;'
+                    f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">TOP SCORER · {team}</div>'
+                    f'<div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;'
+                    f'text-overflow:ellipsis;">{player}</div>'
+                    f'<div style="font-size:10px;color:#888;margin-top:1px;">⚽ {goals} &nbsp;·&nbsp; {assists} assists</div>'
+                    f'</div></div>'
+                )
+            if cards_html:
+                st.markdown(
+                    '<div style="display:flex;gap:8px;margin:6px 0 10px;">' + "".join(cards_html) + "</div>",
+                    unsafe_allow_html=True,
+                )
             st.divider()
 
         # Stats
