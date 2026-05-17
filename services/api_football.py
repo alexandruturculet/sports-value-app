@@ -9,17 +9,28 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-API_KEY = os.getenv("FOOTBALL_API_KEY")
 BASE_URL = "https://v3.football.api-sports.io"
-HEADERS = {"x-apisports-key": API_KEY}
+
+
+def _get_key() -> str | None:
+    """Read API key at call time so Streamlit secrets are always available."""
+    key = os.getenv("FOOTBALL_API_KEY")
+    if not key:
+        try:
+            key = st.secrets.get("FOOTBALL_API_KEY")
+        except Exception:
+            pass
+    return key
 
 
 def _get(url: str) -> dict:
-    if not API_KEY:
+    api_key = _get_key()
+    if not api_key:
         logger.debug("FOOTBALL_API_KEY not set — skipping API-Football call")
         return {}
+    headers = {"x-apisports-key": api_key}
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 429:
             logger.warning("API-Football rate limit hit for %s", url)
             return {}

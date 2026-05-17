@@ -8,6 +8,7 @@ from services.football_api import (
     get_standings_for_leagues,
     get_top_scorer_for_team,
     get_match_lineup,
+    get_last_team_lineup,
     make_request,
     BASE_URL,
     LEAGUE_CODES,
@@ -176,10 +177,14 @@ _POS_GROUP = {
 _POS_ORDER = ["GK", "DEF", "MID", "FWD"]
 
 
-def _render_team_xi(col, team_name: str, lineup: list, bench: list, injuries: list) -> None:
+def _render_team_xi(col, team_name: str, lineup: list, bench: list, injuries: list, probable: bool = False) -> None:
     with col:
         st.markdown(f"**{team_name}**")
         if lineup:
+            if probable:
+                st.caption("Probable XI (based on last match)")
+            else:
+                st.caption("Confirmed lineup")
             groups: dict = {}
             for p in lineup:
                 key = _POS_GROUP.get(p.get("position", ""), "MID")
@@ -272,14 +277,22 @@ def render_match_card(r: dict) -> None:
         st.divider()
         st.markdown("**Starting XI & Absents**")
         lineup_data = get_match_lineup(r.get("fixture_id"))
+        probable = False
+        # Official lineup not released yet — use last-match lineup as probable XI
+        if not lineup_data["home"]["lineup"] or not lineup_data["away"]["lineup"]:
+            home_last = get_last_team_lineup(r["home"], r["competition_code"])
+            away_last = get_last_team_lineup(r["away"], r["competition_code"])
+            if home_last["lineup"] or away_last["lineup"]:
+                lineup_data = {"home": home_last, "away": away_last}
+                probable = True
         injuries = get_fixture_injuries(r["home"], r["away"], r.get("kickoff_date_str", ""))
         xi_home, xi_away = st.columns(2)
         _render_team_xi(xi_home, r["home"],
                         lineup_data["home"]["lineup"], lineup_data["home"]["bench"],
-                        injuries["home"])
+                        injuries["home"], probable)
         _render_team_xi(xi_away, r["away"],
                         lineup_data["away"]["lineup"], lineup_data["away"]["bench"],
-                        injuries["away"])
+                        injuries["away"], probable)
 
         with st.expander("Model details"):
             st.json(r["breakdown"])

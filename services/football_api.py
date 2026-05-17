@@ -150,6 +150,36 @@ def get_match_lineup(fixture_id) -> dict:
 
 
 @st.cache_data(ttl=3600)
+def get_recent_finished_matches(competition_code: str) -> list:
+    url = f"{BASE_URL}/competitions/{competition_code}/matches?status=FINISHED&limit=20"
+    data = make_request(url)
+    if not data or "matches" not in data:
+        return []
+    return data["matches"]
+
+
+@st.cache_data(ttl=3600)
+def get_last_team_lineup(team_name: str, competition_code: str) -> dict:
+    """Last confirmed lineup for a team — used as probable XI before official announcement."""
+    _empty = {"lineup": [], "bench": []}
+    finished = get_recent_finished_matches(competition_code)
+    for match in reversed(finished):
+        home = match["homeTeam"]["name"]
+        away = match["awayTeam"]["name"]
+        if home != team_name and away != team_name:
+            continue
+        fid = match.get("id")
+        if not fid:
+            continue
+        detail = get_match_lineup(fid)
+        side = "home" if home == team_name else "away"
+        result = detail.get(side, _empty)
+        if result.get("lineup"):
+            return result
+    return _empty
+
+
+@st.cache_data(ttl=3600)
 def get_team_form(team_name: str):
     for league_code in _SEARCH_LEAGUES:
         url = f"{BASE_URL}/competitions/{league_code}/matches?status=FINISHED&limit=100"
