@@ -215,6 +215,62 @@ def render_match_card(r: dict) -> None:
         else:
             st.warning("No edge detected")
 
+        # Starting XI + Absents
+        st.divider()
+        ctx = r["breakdown"].get("context", {})
+        home_ctx = ctx.get("home", {})
+        away_ctx = ctx.get("away", {})
+
+        home_confirmed = home_ctx.get("confirmed", [])
+        away_confirmed = away_ctx.get("confirmed", [])
+        home_lineup = home_ctx.get("lineup", [])
+        away_lineup = away_ctx.get("lineup", [])
+        home_injuries = home_ctx.get("injuries", [])
+        away_injuries = away_ctx.get("injuries", [])
+
+        st.markdown("**Probable Starting XI**")
+        xi_home, xi_away = st.columns(2)
+
+        def _render_xi(col, team_name, confirmed, lineup, injuries):
+            with col:
+                st.markdown(f"**{team_name}**")
+                # API-Football confirmed lineup format
+                shown = False
+                for entry in confirmed:
+                    if not isinstance(entry, dict):
+                        continue
+                    start_xi = entry.get("startXI", [])
+                    if not start_xi:
+                        continue
+                    shown = True
+                    formation = entry.get("formation", "")
+                    if formation:
+                        st.caption(f"Formation: {formation}")
+                    for slot in start_xi:
+                        pl = slot.get("player", {})
+                        num = pl.get("number", "")
+                        name = pl.get("name", "")
+                        pos = pl.get("pos", "")
+                        st.write(f"{num}. {name}" + (f" ({pos})" if pos else ""))
+                if not shown:
+                    if lineup:
+                        for name in lineup:
+                            st.write(f"• {name}")
+                    else:
+                        st.caption("Lineup not yet announced")
+
+                if injuries:
+                    st.markdown("**Absents / Injuries:**")
+                    for inj in injuries:
+                        pl_name = inj.get("player", {}).get("name", "Unknown") if isinstance(inj, dict) else str(inj)
+                        reason = inj.get("injury", {}).get("reason", "") if isinstance(inj, dict) else ""
+                        st.write(f"❌ {pl_name}" + (f" — {reason}" if reason else ""))
+                else:
+                    st.caption("No injury reports available")
+
+        _render_xi(xi_home, r["home"], home_confirmed, home_lineup, home_injuries)
+        _render_xi(xi_away, r["away"], away_confirmed, away_lineup, away_injuries)
+
         with st.expander("Model details"):
             st.json(r["breakdown"])
 
@@ -249,16 +305,18 @@ else:
 
 # ── Auto ticket ───────────────────────────────────────────────────────────────
 
-ticket = build_ticket(results)
+ticket = build_ticket(today_results)
 
 st.header("Auto Ticket Builder")
+st.caption("Today's picks only — sorted by Expected Value")
 
 if ticket and ticket.get("ticket"):
     for t in ticket["ticket"]:
+        kickoff_label = f" | {t['kickoff']}" if t.get("kickoff") else ""
         st.write(
-            f"{t['match']} → {t['prediction']} "
-            f"EV: {round(t.get('ev', 0), 3)} | Kelly: {round(t.get('kelly', 0), 3)}"
+            f"**{t['match']}**{kickoff_label}  \n"
+            f"{t['prediction']} — EV: {round(t.get('ev', 0), 3)} | Kelly: {round(t.get('kelly', 0), 3)}"
         )
     st.success(f"Avg Confidence: {round(ticket.get('avg_confidence', 0), 2)}%")
 else:
-    st.warning("No value bets today")
+    st.warning("No picks available for today")
