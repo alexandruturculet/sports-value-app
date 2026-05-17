@@ -103,44 +103,78 @@ def get_espn_lineups(home_team: str, away_team: str, league_code: str, date_str:
     return _empty
 
 
+@st.cache_data(ttl=3600)
+def _espn_team_injury_report(slug: str, team_id: str) -> list:
+    """Fetch the ESPN team injury report for a single team."""
+    data = _get(f"{_BASE}/{slug}/teams/{team_id}/injuries")
+    out = []
+    for item in data.get("injuries", []):
+        athlete = item.get("athlete", {})
+        injury_type = item.get("type", {}).get("text", "")
+        status = item.get("status", "")
+        reason = injury_type or status or "Unavailable"
+        out.append({
+            "name": athlete.get("displayName", "Unknown"),
+            "type": "injury",
+            "reason": reason,
+        })
+    return out
+
+
 @st.cache_data(ttl=1800)
 def get_espn_injuries(home_team: str, away_team: str, league_code: str, date_str: str) -> dict:
-    """Extract injured/absent players from ESPN roster data for a fixture."""
+    """Fetch absent/injured players: roster flags first, team injury report as fallback."""
     _empty = {"home": [], "away": []}
     slug = _SLUGS.get(league_code)
     if not slug:
         return _empty
     ymd = date_str.replace("-", "")
+
+    home_id = away_id = None
+    home_out, away_out = [], []
+
     for event in _scoreboard(slug, ymd):
         comps = event.get("competitions", [{}])
         competitors = comps[0].get("competitors", []) if comps else []
         h = next((c["team"]["name"] for c in competitors if c.get("homeAway") == "home"), "")
         a = next((c["team"]["name"] for c in competitors if c.get("homeAway") == "away"), "")
-        if _match(home_team, h) and _match(away_team, a):
-            data = _summary(slug, event["id"])
-            home_out, away_out = [], []
-            for entry in data.get("rosters", []):
-                side = entry.get("homeAway", "")
-                if side not in ("home", "away"):
-                    continue
-                out = home_out if side == "home" else away_out
-                for athlete in entry.get("roster", []):
-                    if athlete.get("injured") or not athlete.get("active", True):
-                        pl = athlete.get("athlete", {})
-                        injury = athlete.get("injury") or {}
-                        reason = (
-                            injury.get("type", {}).get("text", "")
-                            or injury.get("description", "")
-                            or "Unavailable"
-                        )
-                        out.append({
-                            "name": pl.get("displayName", "Unknown"),
-                            "type": "injury" if athlete.get("injured") else "unavailable",
-                            "reason": reason,
-                        })
-            if home_out or away_out:
-                return {"home": home_out, "away": away_out}
-    return _empty
+        if not (_match(home_team, h) and _match(away_team, a)):
+            continue
+
+        home_id = next((c["team"]["id"] for c in competitors if c.get("homeAway") == "home"), None)
+        away_id = next((c["team"]["id"] for c in competitors if c.get("homeAway") == "away"), None)
+
+        # Try roster-based injury flags (available once lineups are confirmed)
+        data = _summary(slug, event["id"])
+        for entry in data.get("rosters", []):
+            side = entry.get("homeAway", "")
+            if side not in ("home", "away"):
+                continue
+            out = home_out if side == "home" else away_out
+            for athlete in entry.get("roster", []):
+                if athlete.get("injured") or not athlete.get("active", True):
+                    pl = athlete.get("athlete", {})
+                    injury = athlete.get("injury") or {}
+                    reason = (
+                        injury.get("type", {}).get("text", "")
+                        or injury.get("description", "")
+                        or "Unavailable"
+                    )
+                    out.append({
+                        "name": pl.get("displayName", "Unknown"),
+                        "type": "injury" if athlete.get("injured") else "unavailable",
+                        "reason": reason,
+                    })
+        break
+
+    if home_out or away_out:
+        return {"home": home_out, "away": away_out}
+
+    # Fallback: team-level injury report (pre-match data, no lineup needed)
+    return {
+        "home": _espn_team_injury_report(slug, str(home_id)) if home_id else [],
+        "away": _espn_team_injury_report(slug, str(away_id)) if away_id else [],
+    }
 
 
 @st.cache_data(ttl=86400)

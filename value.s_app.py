@@ -241,11 +241,11 @@ def _player_dot(p: dict, bg: str) -> str:
     num = str(p.get("shirtNumber", "")) or "?"
     name = _short_name(p.get("name", ""))
     return (
-        '<div style="display:flex;flex-direction:column;align-items:center;margin:0 3px 4px;">'
-        f'<div style="background:{bg};color:#111;border-radius:50%;width:32px;height:32px;'
-        f'display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;'
+        '<div style="display:flex;flex-direction:column;align-items:center;margin:0 2px 4px;">'
+        f'<div style="background:{bg};color:#111;border-radius:50%;width:28px;height:28px;'
+        f'display:flex;align-items:center;justify-content:center;font-weight:700;font-size:10px;'
         f'box-shadow:0 2px 5px rgba(0,0,0,0.5);">{num}</div>'
-        f'<span style="color:#fff;font-size:8.5px;text-align:center;width:40px;'
+        f'<span style="color:#fff;font-size:7.5px;text-align:center;width:34px;'
         f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
         f'text-shadow:0 1px 2px rgba(0,0,0,0.9);margin-top:2px;">{name}</span>'
         '</div>'
@@ -325,8 +325,9 @@ def _render_pitch(home_name: str, home_xi: list, away_name: str, away_xi: list, 
     )
 
     html = (
-        '<div style="max-width:500px;margin:0 auto 8px;">'
-        '<div style="background:linear-gradient(180deg,#1e6e1e 0%,#164d16 100%);'
+        '<div style="width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 auto 8px;">'
+        '<div style="min-width:280px;max-width:500px;margin:0 auto;'
+        'background:linear-gradient(180deg,#1e6e1e 0%,#164d16 100%);'
         'border-radius:10px;padding:8px 2px;font-family:\'Segoe UI\',Arial,sans-serif;'
         'border:1px solid rgba(255,255,255,0.12);">'
         f'<div style="text-align:center;font-size:10px;color:rgba(255,255,255,0.45);margin-bottom:4px;">{label}</div>'
@@ -382,26 +383,26 @@ def render_match_card(r: dict) -> None:
                     continue
                 img_url = get_player_image_url(wiki)
                 img_el = (
-                    f'<img src="{img_url}" style="width:42px;height:42px;border-radius:50%;'
+                    f'<img src="{img_url}" style="width:56px;height:56px;border-radius:50%;'
                     f'object-fit:cover;flex-shrink:0;">'
                     if img_url else
-                    '<div style="width:42px;height:42px;border-radius:50%;background:#2a2a2a;flex-shrink:0;"></div>'
+                    '<div style="width:56px;height:56px;border-radius:50%;background:#2a2a2a;flex-shrink:0;"></div>'
                 )
                 cards_html.append(
-                    f'<div style="flex:1;display:flex;align-items:center;gap:10px;padding:9px 12px;'
+                    f'<div style="flex:1 1 180px;display:flex;align-items:center;gap:10px;padding:10px 14px;'
                     f'border-radius:8px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);">'
                     f'{img_el}'
                     f'<div style="min-width:0;">'
                     f'<div style="font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.5px;'
                     f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">TOP SCORER · {team}</div>'
-                    f'<div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;'
+                    f'<div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;'
                     f'text-overflow:ellipsis;">{player}</div>'
-                    f'<div style="font-size:10px;color:#888;margin-top:1px;">⚽ {goals} &nbsp;·&nbsp; {assists} assists</div>'
+                    f'<div style="font-size:11px;color:#888;margin-top:2px;">⚽ {goals} &nbsp;·&nbsp; {assists} assists</div>'
                     f'</div></div>'
                 )
             if cards_html:
                 st.markdown(
-                    '<div style="display:flex;gap:8px;margin:6px 0 10px;">' + "".join(cards_html) + "</div>",
+                    '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px;">' + "".join(cards_html) + "</div>",
                     unsafe_allow_html=True,
                 )
             st.divider()
