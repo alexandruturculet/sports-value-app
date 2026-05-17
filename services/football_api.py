@@ -67,6 +67,27 @@ def make_request(url: str, max_retries: int = 3):
 
 
 @st.cache_data(ttl=3600)
+def get_league_scorers(league_code: str) -> list:
+    """Return top scorers list for a competition (up to 100 entries)."""
+    url = f"{BASE_URL}/competitions/{league_code}/scorers?limit=100"
+    data = make_request(url)
+    if not data or "scorers" not in data:
+        logger.warning("No scorers data for league: %s", league_code)
+        return []
+    return data["scorers"]
+
+
+def get_top_scorer_for_team(team_name: str, competition_code: str) -> tuple:
+    """Return (player_name, player_name) for the team's leading scorer, or (None, None)."""
+    scorers = get_league_scorers(competition_code)
+    for entry in scorers:
+        if entry.get("team", {}).get("name") == team_name:
+            name = entry["player"]["name"]
+            return name, name
+    return None, None
+
+
+@st.cache_data(ttl=3600)
 def get_standings_for_leagues(leagues):
     all_standings = {}
     for league in leagues:

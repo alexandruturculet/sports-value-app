@@ -6,6 +6,7 @@ import pytz
 
 from services.football_api import (
     get_standings_for_leagues,
+    get_top_scorer_for_team,
     make_request,
     BASE_URL,
     LEAGUE_CODES,
@@ -13,7 +14,6 @@ from services.football_api import (
 from models.v7.prediction_engine import generate_prediction
 from models.v7.ticket_engine import build_ticket
 from models.v7.match_preview import generate_preview
-from models.v7.top_players import get_top_player
 from services.player_images import get_player_image_url
 from models.data_normalizer import normalize_league, register_team_stats
 from models.team_strength_model import get_team_strength
@@ -103,6 +103,7 @@ matches = get_matches(tuple(leagues))
 
 results = []
 processed = 0
+today_local = datetime.now(DISPLAY_TZ).date()
 
 for m in matches:
     if processed >= MAX_MATCHES:
@@ -117,6 +118,7 @@ for m in matches:
     home_name = m["homeTeam"]["name"]
     away_name = m["awayTeam"]["name"]
     league = normalize_league(m["competition"]["name"])
+    competition_code = m["competition"].get("code", "PL")
     fixture_id = m.get("id")
 
     league_data = standings.get(league) or standings.get(m["competition"]["name"], [])
@@ -138,6 +140,8 @@ for m in matches:
         "away": away_name,
         "match": f"{home_name} vs {away_name}",
         "kickoff": match_dt.strftime("%d-%m-%Y %H:%M %Z"),
+        "kickoff_date": match_dt.date(),
+        "competition_code": competition_code,
         "prediction": prediction,
         "confidence": confidence,
         "reason": reason,
@@ -150,38 +154,35 @@ for m in matches:
 
 results = sorted(results, key=lambda x: x.get("edge", {}).get("ev", 0), reverse=True)
 
+today_results = [r for r in results if r["kickoff_date"] == today_local]
+upcoming_results = [r for r in results if r["kickoff_date"] > today_local]
 
-# ── Display ───────────────────────────────────────────────────────────────────
 
-st.header("V7 EDGE PICKS")
+# ── Render helper ─────────────────────────────────────────────────────────────
 
-if not results:
-    st.warning("No matches found for the selected leagues and time window.")
-
-for r in results:
+def render_match_card(r: dict) -> None:
     is_fallback = r["breakdown"].get("is_fallback")
     value_badge = " ✔ VALUE" if r["edge"].get("value_bet") else ""
     label = f"{r['match']} | {r['prediction']} ({round(r['confidence'], 2)}%){value_badge}"
 
     with st.expander(label):
-
-        # ── Match preview text ────────────────────────────────────────────────
+        # Preview text
         preview = generate_preview(
             r["home"], r["away"], r["prediction"], r["breakdown"], r["confidence"]
         )
         st.markdown(f"_{preview}_")
         st.divider()
 
-        # ── Best player cards ─────────────────────────────────────────────────
-        home_player, home_wiki = get_top_player(r["home"])
-        away_player, away_wiki = get_top_player(r["away"])
+        # Key player cards — live data from scorers endpoint
+        home_player, home_wiki = get_top_scorer_for_team(r["home"], r["competition_code"])
+        away_player, away_wiki = get_top_scorer_for_team(r["away"], r["competition_code"])
 
         if home_player or away_player:
             col_home, col_spacer, col_away = st.columns([2, 1, 2])
 
             with col_home:
                 if home_player:
-                    st.caption(f"Key player — {r['home']}")
+                    st.caption(f"Top scorer — {r['home']}")
                     st.markdown(f"**{home_player}**")
                     img = get_player_image_url(home_wiki)
                     if img:
@@ -189,7 +190,7 @@ for r in results:
 
             with col_away:
                 if away_player:
-                    st.caption(f"Key player — {r['away']}")
+                    st.caption(f"Top scorer — {r['away']}")
                     st.markdown(f"**{away_player}**")
                     img = get_player_image_url(away_wiki)
                     if img:
@@ -197,7 +198,7 @@ for r in results:
 
             st.divider()
 
-        # ── Stats ─────────────────────────────────────────────────────────────
+        # Stats
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Prediction", r["prediction"])
         c2.metric("Confidence", f"{round(r['confidence'], 1)}%")
@@ -216,6 +217,34 @@ for r in results:
 
         with st.expander("Model details"):
             st.json(r["breakdown"])
+
+
+# ── Today's matches ───────────────────────────────────────────────────────────
+
+st.header(f"Today's Picks — {today_local.strftime('%d %B %Y')}")
+
+if today_results:
+    for r in today_results:
+        render_match_card(r)
+else:
+    st.info("No matches scheduled for today in the selected leagues.")
+
+
+# ── Upcoming matches ──────────────────────────────────────────────────────────
+
+st.header("Upcoming Picks")
+
+if upcoming_results:
+    # Group by date
+    seen_dates: set = set()
+    for r in upcoming_results:
+        date_label = r["kickoff_date"].strftime("%A, %d %B %Y")
+        if date_label not in seen_dates:
+            seen_dates.add(date_label)
+            st.subheader(date_label)
+        render_match_card(r)
+else:
+    st.info("No upcoming matches in the next 7 days for the selected leagues.")
 
 
 # ── Auto ticket ───────────────────────────────────────────────────────────────
