@@ -16,6 +16,15 @@ from models.team_strength_model import get_team_strength
 
 logging.basicConfig(level=logging.INFO)
 
+import os
+_FOOTBALL_DATA_KEY = os.getenv("football-data-api-key")
+if not _FOOTBALL_DATA_KEY:
+    st.error(
+        "**API key missing.** Set `football-data-api-key` in Streamlit Cloud → Manage app → Settings → Secrets.",
+        icon="🔑",
+    )
+    st.stop()
+
 DISPLAY_TZ = pytz.timezone("Europe/Bucharest")
 
 MAX_MATCHES = 25
