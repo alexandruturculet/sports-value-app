@@ -513,8 +513,52 @@ else:
 
 # ── Ticket History ────────────────────────────────────────────────────────────
 
+
+def _match_outcome(fixture_id: int) -> str | None:
+    """Returns 'Home Win', 'Away Win', 'Draw', or None if not yet finished."""
+    data = make_request(f"{BASE_URL}/matches/{fixture_id}")
+    if not data or data.get("status") != "FINISHED":
+        return None
+    score = data.get("score", {}).get("fullTime", {})
+    h, a = score.get("home"), score.get("away")
+    if h is None or a is None:
+        return None
+    return "Home Win" if h > a else ("Away Win" if a > h else "Draw")
+
+
+def _auto_evaluate_pending_tickets(today_str: str) -> None:
+    """Check all past pending tickets and auto-mark won/lost. Runs once per session."""
+    for ticket in get_all_tickets():
+        if ticket["result"] != "pending":
+            continue
+        if ticket["date"] >= today_str:
+            continue  # today's ticket — wait until tomorrow
+        picks = ticket.get("picks", [])
+        if not picks:
+            continue
+        outcomes = []
+        all_finished = True
+        for pick in picks:
+            fid = pick.get("fixture_id")
+            if not fid:
+                all_finished = False
+                break
+            outcome = _match_outcome(int(fid))
+            if outcome is None:
+                all_finished = False
+                break
+            outcomes.append(outcome == pick["prediction"])
+        if all_finished and outcomes:
+            update_ticket_result(ticket["id"], "won" if all(outcomes) else "lost")
+
+
+# Run evaluation once per session (not on every rerender)
+if not st.session_state.get("_tickets_evaluated"):
+    _auto_evaluate_pending_tickets(today_local.isoformat())
+    st.session_state["_tickets_evaluated"] = True
+
 st.header("Ticket History")
-st.caption("All saved tickets — mark each as Won or Lost after the matches finish")
+st.caption("Results are evaluated automatically once all matches in a ticket finish")
 
 _tickets = get_all_tickets()
 
@@ -524,7 +568,6 @@ else:
     # Stats
     _won = sum(1 for t in _tickets if t["result"] == "won")
     _lost = sum(1 for t in _tickets if t["result"] == "lost")
-    _pending = sum(1 for t in _tickets if t["result"] == "pending")
     _decided = _won + _lost
     _win_rate = (_won / _decided * 100) if _decided > 0 else None
 
@@ -559,36 +602,23 @@ else:
     }
 
     for _t in _tickets:
-        _tid = _t["id"]
         _date = _t["date"]
         _result = _t.get("result", "pending")
         _picks = _t.get("picks", [])
         _avg_conf = _t.get("avg_confidence", 0)
         _badge = _RESULT_BADGE.get(_result, _RESULT_BADGE["pending"])
 
-        _header_html = (
-            f'<div style="display:flex;align-items:center;gap:10px;">'
-            f'<span style="font-weight:600;">{_date}</span>'
-            f'{_badge}'
-            f'<span style="color:#888;font-size:11px;">{len(_picks)} picks · Avg conf {round(_avg_conf, 1)}%</span>'
-            f'</div>'
-        )
-        with st.expander(_date + f"  |  {_result.upper()}  |  {len(_picks)} picks"):
-            st.markdown(_header_html, unsafe_allow_html=True)
-            st.write("")
+        with st.expander(f"{_date}  |  {_result.upper()}  |  {len(_picks)} picks"):
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
+                f'<span style="font-weight:600;">{_date}</span>{_badge}'
+                f'<span style="color:#888;font-size:11px;">'
+                f'{len(_picks)} picks · Avg conf {round(_avg_conf, 1)}%</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
             for _p in _picks:
                 st.write(
                     f"**{_p['match']}** — {_p['prediction']} "
                     f"— EV: {round(_p.get('ev', 0), 3)} | Kelly: {round(_p.get('kelly', 0), 3)}"
                 )
-            st.write("")
-            _b1, _b2, _b3, _ = st.columns([1, 1, 1, 3])
-            if _b1.button("✅ Won", key=f"won_{_tid}"):
-                update_ticket_result(_tid, "won")
-                st.rerun()
-            if _b2.button("❌ Lost", key=f"lost_{_tid}"):
-                update_ticket_result(_tid, "lost")
-                st.rerun()
-            if _result != "pending" and _b3.button("↩ Reset", key=f"reset_{_tid}"):
-                update_ticket_result(_tid, "pending")
-                st.rerun()
