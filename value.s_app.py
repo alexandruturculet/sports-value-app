@@ -186,7 +186,7 @@ for r in upcoming_results:
     r["_injuries"] = {"home": [], "away": []}
 
 
-# ── Render helper ─────────────────────────────────────────────────────────────
+# ── Render helpers ────────────────────────────────────────────────────────────
 
 _POS_GROUP = {
     "Goalkeeper": "GK", "Keeper": "GK",
@@ -197,48 +197,96 @@ _POS_GROUP = {
     "Centre-Forward": "FWD", "Left Winger": "FWD", "Right Winger": "FWD",
     "Striker": "FWD",
 }
-_POS_ORDER = ["GK", "DEF", "MID", "FWD"]
 
 
-def _render_team_xi(col, team_name: str, lineup: list, bench: list, injuries: list, probable: bool = False) -> None:
-    with col:
-        st.markdown(f"**{team_name}**")
-        if lineup:
-            if probable:
-                st.caption("Probable XI (based on last match)")
-            else:
-                st.caption("Confirmed lineup")
-            groups: dict = {}
-            for p in lineup:
-                key = _POS_GROUP.get(p.get("position", ""), "MID")
-                groups.setdefault(key, []).append(p)
-            for pos in _POS_ORDER:
-                if pos not in groups:
-                    continue
-                st.caption(pos)
-                for p in groups[pos]:
-                    num = p.get("shirtNumber", "")
-                    name = p.get("name", "")
-                    st.write(f"#{num} {name}" if num else f"• {name}")
-            if bench:
-                st.caption("BENCH")
-                for p in bench[:7]:
-                    num = p.get("shirtNumber", "")
-                    name = p.get("name", "")
-                    st.write(f"_{('#' + str(num) + ' ') if num else ''}{name}_")
-        else:
-            st.caption("Lineup not yet announced")
+def _short_name(name: str) -> str:
+    parts = name.split()
+    return parts[-1][:12] if len(parts) > 1 else name[:12]
 
-        if injuries:
-            st.markdown("**Absents / Injuries**")
-            for inj in injuries:
-                reason = inj.get("reason") or inj.get("type") or ""
-                line = f"❌ {inj['name']}"
-                if reason:
-                    line += f" — *{reason}*"
-                st.write(line)
-        else:
-            st.caption("No injury reports available")
+
+def _player_dot(p: dict, bg: str) -> str:
+    num = str(p.get("shirtNumber", "")) or "?"
+    name = _short_name(p.get("name", ""))
+    return (
+        f'<div style="display:flex;flex-direction:column;align-items:center;margin:3px 0;">'
+        f'<div style="background:{bg};color:#111;border-radius:50%;width:34px;height:34px;'
+        f'display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;'
+        f'box-shadow:0 2px 5px rgba(0,0,0,0.5);">{num}</div>'
+        f'<span style="color:#fff;font-size:9px;text-align:center;width:44px;white-space:nowrap;'
+        f'overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px rgba(0,0,0,0.9);'
+        f'margin-top:2px;">{name}</span>'
+        f'</div>'
+    )
+
+
+def _pos_column(players: list, bg: str) -> str:
+    inner = "".join(_player_dot(p, bg) for p in players)
+    return (
+        f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;'
+        f'justify-content:space-around;padding:0 2px;">{inner}</div>'
+    )
+
+
+def _infer_formation(groups: dict) -> str:
+    parts = [str(len(groups.get(k, []))) for k in ("DEF", "MID", "FWD") if groups.get(k)]
+    return "-".join(parts)
+
+
+def _render_pitch(home_name: str, home_xi: list, away_name: str, away_xi: list, probable: bool) -> None:
+    def group(lineup):
+        g: dict = {"GK": [], "DEF": [], "MID": [], "FWD": []}
+        for p in lineup:
+            g.setdefault(_POS_GROUP.get(p.get("position", ""), "MID"), []).append(p)
+        return g
+
+    hg = group(home_xi)
+    ag = group(away_xi)
+
+    label = "Probable XI — based on last match" if probable else "Confirmed lineup"
+    h_form = _infer_formation(hg)
+    a_form = _infer_formation(ag)
+
+    if home_xi:
+        home_cols = "".join(
+            _pos_column(hg[pos], "#e8e8e8")
+            for pos in ("GK", "DEF", "MID", "FWD") if hg.get(pos)
+        )
+    else:
+        home_cols = ('<div style="flex:1;display:flex;align-items:center;justify-content:center;'
+                     'color:rgba(255,255,255,0.4);font-size:12px;">Not announced</div>')
+
+    if away_xi:
+        away_cols = "".join(
+            _pos_column(ag[pos], "#ffd080")
+            for pos in ("FWD", "MID", "DEF", "GK") if ag.get(pos)
+        )
+    else:
+        away_cols = ('<div style="flex:1;display:flex;align-items:center;justify-content:center;'
+                     'color:rgba(255,255,255,0.4);font-size:12px;">Not announced</div>')
+
+    html = (
+        '<div style="background:linear-gradient(135deg,#256d25 0%,#1a5218 100%);'
+        'border-radius:10px;padding:10px 8px 8px;font-family:\'Segoe UI\',Arial,sans-serif;'
+        'border:1px solid rgba(255,255,255,0.12);margin-bottom:6px;">'
+
+        '<div style="display:flex;justify-content:space-between;margin-bottom:6px;'
+        'font-size:11px;color:rgba(255,255,255,0.6);padding:0 2px;">'
+        f'<div><span style="color:#eee;font-weight:600;">{home_name}</span>'
+        f'{"&nbsp;<span style=\'color:rgba(255,255,255,0.38);\'>" + h_form + "</span>" if h_form else ""}</div>'
+        f'<span style="font-size:10px;">{label}</span>'
+        f'<div>{"<span style=\'color:rgba(255,255,255,0.38);\'>" + a_form + "</span>&nbsp;" if a_form else ""}'
+        f'<span style="color:#eee;font-weight:600;">{away_name}</span></div>'
+        '</div>'
+
+        '<div style="display:flex;height:230px;position:relative;">'
+        '<div style="position:absolute;left:50%;top:0;bottom:0;width:1px;'
+        'background:rgba(255,255,255,0.2);transform:translateX(-50%);"></div>'
+        f'<div style="flex:1;display:flex;padding-right:4px;">{home_cols}</div>'
+        f'<div style="flex:1;display:flex;padding-left:4px;">{away_cols}</div>'
+        '</div>'
+        '</div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def render_match_card(r: dict) -> None:
@@ -298,17 +346,35 @@ def render_match_card(r: dict) -> None:
 
         # Starting XI + Absents  (data pre-fetched before render loop)
         st.divider()
-        st.markdown("**Starting XI & Absents**")
         lineup_data = r["_lineup"]
         probable = r["_probable"]
         injuries = r["_injuries"]
-        xi_home, xi_away = st.columns(2)
-        _render_team_xi(xi_home, r["home"],
-                        lineup_data["home"]["lineup"], lineup_data["home"]["bench"],
-                        injuries["home"], probable)
-        _render_team_xi(xi_away, r["away"],
-                        lineup_data["away"]["lineup"], lineup_data["away"]["bench"],
-                        injuries["away"], probable)
+        home_xi = lineup_data["home"]["lineup"]
+        away_xi = lineup_data["away"]["lineup"]
+
+        if home_xi or away_xi:
+            _render_pitch(r["home"], home_xi, r["away"], away_xi, probable)
+        else:
+            xi_l, xi_r = st.columns(2)
+            xi_l.caption(f"{r['home']} — Lineup not yet announced")
+            xi_r.caption(f"{r['away']} — Lineup not yet announced")
+
+        home_inj = injuries.get("home", [])
+        away_inj = injuries.get("away", [])
+        if home_inj or away_inj:
+            abs_l, abs_r = st.columns(2)
+            with abs_l:
+                if home_inj:
+                    st.markdown(f"**Absents — {r['home']}**")
+                    for inj in home_inj:
+                        reason = inj.get("reason") or inj.get("type") or ""
+                        st.write(f"❌ {inj['name']}" + (f" — *{reason}*" if reason else ""))
+            with abs_r:
+                if away_inj:
+                    st.markdown(f"**Absents — {r['away']}**")
+                    for inj in away_inj:
+                        reason = inj.get("reason") or inj.get("type") or ""
+                        st.write(f"❌ {inj['name']}" + (f" — *{reason}*" if reason else ""))
 
         with st.expander("Model details"):
             st.json(r["breakdown"])

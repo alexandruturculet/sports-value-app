@@ -45,14 +45,34 @@ def _summary(slug: str, event_id: str) -> dict:
     return _get(f"{_BASE}/{slug}/summary?event={event_id}")
 
 
+_ESPN_POS_MAP = {
+    "GK": "Goalkeeper", "G": "Goalkeeper",
+    "CB": "Centre-Back", "LCB": "Centre-Back", "RCB": "Centre-Back",
+    "LB": "Left-Back", "LWB": "Left-Back",
+    "RB": "Right-Back", "RWB": "Right-Back",
+    "D": "Defender",
+    "DM": "Defensive Midfield", "CDM": "Defensive Midfield",
+    "CM": "Central Midfield", "LCM": "Central Midfield", "RCM": "Central Midfield",
+    "AM": "Attacking Midfield", "CAM": "Attacking Midfield",
+    "LM": "Left Midfield", "RM": "Right Midfield",
+    "M": "Midfielder",
+    "LW": "Left Winger", "RW": "Right Winger",
+    "CF": "Centre-Forward", "SS": "Centre-Forward",
+    "ST": "Striker", "F": "Forward",
+}
+
+
 def _parse_roster(roster_entry: dict) -> dict:
     lineup, bench = [], []
     for a in roster_entry.get("roster", []):
         pos = a.get("position", {})
+        abbr = pos.get("abbreviation", "").upper()
+        display = pos.get("displayName", "")
+        position = _ESPN_POS_MAP.get(abbr) or display
         p = {
             "name": a.get("athlete", {}).get("displayName", ""),
             "shirtNumber": a.get("jersey", "") or "",
-            "position": pos.get("displayName", "") or pos.get("abbreviation", ""),
+            "position": position,
         }
         (lineup if a.get("starter") else bench).append(p)
     return {"lineup": lineup, "bench": bench}
@@ -91,7 +111,7 @@ def get_espn_last_lineup(team_name: str, league_code: str) -> dict:
     if not slug:
         return _empty
     today = datetime.now(timezone.utc).date()
-    for days_back in range(1, 8):
+    for days_back in range(1, 15):
         ymd = (today - timedelta(days=days_back)).strftime("%Y%m%d")
         for event in _scoreboard(slug, ymd):
             comps = event.get("competitions", [{}])
