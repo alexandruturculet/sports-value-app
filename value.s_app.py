@@ -151,6 +151,8 @@ for m in matches:
         "reason": reason,
         "breakdown": breakdown,
         "edge": edge,
+        "home_crest": m["homeTeam"].get("crest", ""),
+        "away_crest": m["awayTeam"].get("crest", ""),
     })
 
 
@@ -188,15 +190,34 @@ for r in upcoming_results:
 
 # ── Render helpers ────────────────────────────────────────────────────────────
 
-_POS_GROUP = {
-    "Goalkeeper": "GK", "Keeper": "GK",
-    "Defender": "DEF", "Centre-Back": "DEF", "Right-Back": "DEF", "Left-Back": "DEF",
-    "Midfielder": "MID", "Defensive Midfield": "MID", "Central Midfield": "MID",
-    "Attacking Midfield": "MID", "Right Midfield": "MID", "Left Midfield": "MID",
-    "Forward": "FWD", "Attacker": "FWD", "Winger": "FWD",
-    "Centre-Forward": "FWD", "Left Winger": "FWD", "Right Winger": "FWD",
-    "Striker": "FWD",
+# Granular position → pitch layer (0=GK … 5=FWD); sub-MID rows enable 4-2-3-1 display
+_POS_LAYER = {
+    "Goalkeeper": 0, "Keeper": 0,
+    "Centre-Back": 1, "Right-Back": 1, "Left-Back": 1, "Defender": 1,
+    "Defensive Midfield": 2,
+    "Central Midfield": 3, "Right Midfield": 3, "Left Midfield": 3, "Midfielder": 3,
+    "Attacking Midfield": 4,
+    "Centre-Forward": 5, "Left Winger": 5, "Right Winger": 5,
+    "Forward": 5, "Attacker": 5, "Winger": 5, "Striker": 5,
 }
+
+
+def _group_layers(lineup: list) -> dict:
+    layers: dict = {i: [] for i in range(6)}
+    for p in lineup:
+        layers[_POS_LAYER.get(p.get("position", ""), 3)].append(p)
+    return layers
+
+
+def _formation_str(layers: dict) -> str:
+    counts = [len(layers[i]) for i in range(1, 6) if layers[i]]
+    if len(counts) < 2:
+        return ""
+    def_count = len(layers.get(1, []))
+    fwd_count = len(layers.get(5, []))
+    if not (2 <= def_count <= 5 and 1 <= fwd_count <= 4):
+        return ""
+    return "-".join(str(c) for c in counts)
 
 
 def _short_name(name: str) -> str:
@@ -204,16 +225,26 @@ def _short_name(name: str) -> str:
     return parts[-1][:12] if len(parts) > 1 else name[:12]
 
 
+def _logo_img(url: str, size: int = 20) -> str:
+    if not url:
+        return ""
+    return (
+        f'<img src="{url}" style="width:{size}px;height:{size}px;'
+        f'object-fit:contain;vertical-align:middle;flex-shrink:0;">'
+    )
+
+
 def _player_dot(p: dict, bg: str) -> str:
     num = str(p.get("shirtNumber", "")) or "?"
     name = _short_name(p.get("name", ""))
     return (
-        '<div style="display:flex;flex-direction:column;align-items:center;margin:0 5px;">'
-        f'<div style="background:{bg};color:#111;border-radius:50%;width:30px;height:30px;'
-        f'display:flex;align-items:center;justify-content:center;font-weight:700;font-size:10px;'
-        f'box-shadow:0 2px 4px rgba(0,0,0,0.5);">{num}</div>'
-        f'<span style="color:#fff;font-size:8.5px;text-align:center;width:38px;white-space:nowrap;'
-        f'overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.9);margin-top:2px;">{name}</span>'
+        '<div style="display:flex;flex-direction:column;align-items:center;margin:0 3px 4px;">'
+        f'<div style="background:{bg};color:#111;border-radius:50%;width:32px;height:32px;'
+        f'display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;'
+        f'box-shadow:0 2px 5px rgba(0,0,0,0.5);">{num}</div>'
+        f'<span style="color:#fff;font-size:8.5px;text-align:center;width:40px;'
+        f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+        f'text-shadow:0 1px 2px rgba(0,0,0,0.9);margin-top:2px;">{name}</span>'
         '</div>'
     )
 
@@ -222,75 +253,84 @@ def _pos_row(players: list, bg: str) -> str:
     if not players:
         return ""
     dots = "".join(_player_dot(p, bg) for p in players)
-    return f'<div style="display:flex;justify-content:center;flex-wrap:wrap;padding:5px 4px;">{dots}</div>'
+    return (
+        f'<div style="display:flex;justify-content:space-evenly;align-items:flex-start;'
+        f'padding:5px 6px;">{dots}</div>'
+    )
 
 
-def _infer_formation(groups: dict) -> str:
-    d = len(groups.get("DEF", []))
-    m = len(groups.get("MID", []))
-    f = len(groups.get("FWD", []))
-    if 2 <= d <= 5 and 2 <= m <= 6 and 1 <= f <= 4:
-        return f"{d}-{m}-{f}"
-    return ""
-
-
-def _render_pitch(home_name: str, home_xi: list, away_name: str, away_xi: list, probable: bool) -> None:
-    def group(lineup):
-        g: dict = {"GK": [], "DEF": [], "MID": [], "FWD": []}
-        for p in lineup:
-            g.setdefault(_POS_GROUP.get(p.get("position", ""), "MID"), []).append(p)
-        return g
-
-    hg = group(home_xi)
-    ag = group(away_xi)
+def _render_pitch(home_name: str, home_xi: list, away_name: str, away_xi: list, probable: bool,
+                  home_crest: str = "", away_crest: str = "") -> None:
+    hl = _group_layers(home_xi)
+    al = _group_layers(away_xi)
 
     label = "Probable XI — based on last match" if probable else "Confirmed lineup"
-    h_form = _infer_formation(hg)
-    a_form = _infer_formation(ag)
+    h_form = _formation_str(hl)
+    a_form = _formation_str(al)
 
-    # Away team: GK at top of pitch → FWD closest to center
+    away_logo = _logo_img(away_crest, 18)
     if away_xi:
-        away_rows = "".join(_pos_row(ag.get(pos, []), "#ffd080") for pos in ("GK", "DEF", "MID", "FWD"))
+        # Render layers top-to-bottom: GK(0) → DEF(1) → DM(2) → CM(3) → AM(4) → FWD(5)
+        away_rows = "".join(_pos_row(al[i], "#ffd080") for i in range(6) if al[i])
         a_header = (
-            f'<div style="font-size:11px;color:#ffd080;font-weight:600;padding:0 4px 3px;">'
-            f'{away_name}'
-            + (f'&nbsp;<span style="color:rgba(255,255,255,0.38);font-weight:400;">{a_form}</span>' if a_form else "")
+            f'<div style="font-size:11px;color:#ffd080;font-weight:600;padding:2px 10px 3px;'
+            f'display:flex;align-items:center;gap:5px;">'
+            f'{away_logo}{away_name}'
+            + (f'<span style="color:rgba(255,255,255,0.38);font-weight:400;font-size:10px;'
+               f'margin-left:4px;">{a_form}</span>' if a_form else "")
             + '</div>'
         )
     else:
-        away_rows = '<div style="display:flex;align-items:center;justify-content:center;padding:14px;color:rgba(255,255,255,0.38);font-size:12px;">Lineup not yet announced</div>'
-        a_header = f'<div style="font-size:11px;color:#ffd080;font-weight:600;padding:0 4px 3px;">{away_name}</div>'
+        away_rows = (
+            '<div style="display:flex;align-items:center;justify-content:center;padding:18px;'
+            'color:rgba(255,255,255,0.35);font-size:11px;">Lineup not yet announced</div>'
+        )
+        a_header = (
+            f'<div style="font-size:11px;color:#ffd080;font-weight:600;padding:2px 10px 3px;'
+            f'display:flex;align-items:center;gap:5px;">{away_logo}{away_name}</div>'
+        )
 
-    # Home team: FWD closest to center → GK at bottom of pitch
+    home_logo = _logo_img(home_crest, 18)
     if home_xi:
-        home_rows = "".join(_pos_row(hg.get(pos, []), "#e8e8e8") for pos in ("FWD", "MID", "DEF", "GK"))
+        # Render layers bottom-to-top: FWD(5) → AM(4) → CM(3) → DM(2) → DEF(1) → GK(0)
+        home_rows = "".join(_pos_row(hl[i], "#e8e8e8") for i in range(5, -1, -1) if hl[i])
         h_footer = (
-            f'<div style="font-size:11px;color:#eee;font-weight:600;text-align:right;padding:3px 4px 0;">'
-            + (f'<span style="color:rgba(255,255,255,0.38);font-weight:400;">{h_form}</span>&nbsp;' if h_form else "")
-            + f'{home_name}</div>'
+            f'<div style="font-size:11px;color:#eee;font-weight:600;text-align:right;padding:3px 10px 2px;'
+            f'display:flex;align-items:center;justify-content:flex-end;gap:5px;">'
+            + (f'<span style="color:rgba(255,255,255,0.38);font-weight:400;font-size:10px;">{h_form}</span>'
+               if h_form else "")
+            + f'{home_name}{home_logo}</div>'
         )
     else:
-        home_rows = '<div style="display:flex;align-items:center;justify-content:center;padding:14px;color:rgba(255,255,255,0.38);font-size:12px;">Lineup not yet announced</div>'
-        h_footer = f'<div style="font-size:11px;color:#eee;font-weight:600;text-align:right;padding:3px 4px 0;">{home_name}</div>'
+        home_rows = (
+            '<div style="display:flex;align-items:center;justify-content:center;padding:18px;'
+            'color:rgba(255,255,255,0.35);font-size:11px;">Lineup not yet announced</div>'
+        )
+        h_footer = (
+            f'<div style="font-size:11px;color:#eee;font-weight:600;text-align:right;padding:3px 10px 2px;'
+            f'display:flex;align-items:center;justify-content:flex-end;gap:5px;">'
+            f'{home_name}{home_logo}</div>'
+        )
 
     center_line = (
-        '<div style="display:flex;align-items:center;margin:3px 0;">'
-        '<div style="flex:1;height:1px;background:rgba(255,255,255,0.18);"></div>'
-        '<div style="margin:0 10px;width:18px;height:18px;border-radius:50%;'
-        'border:1px solid rgba(255,255,255,0.18);flex-shrink:0;"></div>'
-        '<div style="flex:1;height:1px;background:rgba(255,255,255,0.18);"></div>'
+        '<div style="display:flex;align-items:center;margin:4px 0;">'
+        '<div style="flex:1;height:1px;background:rgba(255,255,255,0.2);"></div>'
+        '<div style="margin:0 8px;width:30px;height:30px;border-radius:50%;'
+        'border:1px solid rgba(255,255,255,0.2);flex-shrink:0;"></div>'
+        '<div style="flex:1;height:1px;background:rgba(255,255,255,0.2);"></div>'
         '</div>'
     )
 
     html = (
-        '<div style="background:linear-gradient(180deg,#256d25 0%,#1a5218 100%);'
-        'border-radius:10px;padding:8px 6px;font-family:\'Segoe UI\',Arial,sans-serif;'
-        'border:1px solid rgba(255,255,255,0.10);margin-bottom:6px;">'
-        f'<div style="text-align:center;font-size:10px;color:rgba(255,255,255,0.45);margin-bottom:6px;">{label}</div>'
+        '<div style="max-width:500px;margin:0 auto 8px;">'
+        '<div style="background:linear-gradient(180deg,#1e6e1e 0%,#164d16 100%);'
+        'border-radius:10px;padding:8px 2px;font-family:\'Segoe UI\',Arial,sans-serif;'
+        'border:1px solid rgba(255,255,255,0.12);">'
+        f'<div style="text-align:center;font-size:10px;color:rgba(255,255,255,0.45);margin-bottom:4px;">{label}</div>'
         f'{a_header}{away_rows}'
         f'{center_line}'
         f'{home_rows}{h_footer}'
-        '</div>'
+        '</div></div>'
     )
     st.markdown(html, unsafe_allow_html=True)
 
@@ -299,8 +339,25 @@ def render_match_card(r: dict) -> None:
     is_fallback = r["breakdown"].get("is_fallback")
     value_badge = " ✔ VALUE" if r["edge"].get("value_bet") else ""
     label = f"{r['match']} | {r['prediction']} ({round(r['confidence'], 2)}%){value_badge}"
+    home_crest = r.get("home_crest", "")
+    away_crest = r.get("away_crest", "")
 
     with st.expander(label):
+        # Match header with team logos
+        hl = _logo_img(home_crest, 24)
+        al = _logo_img(away_crest, 24)
+        st.markdown(
+            f'<div style="display:flex;align-items:center;justify-content:center;gap:10px;'
+            f'padding:2px 0 10px;">'
+            f'<div style="display:flex;align-items:center;gap:6px;">'
+            f'{hl}<strong>{r["home"]}</strong></div>'
+            f'<span style="color:#888;font-size:12px;">vs</span>'
+            f'<div style="display:flex;align-items:center;gap:6px;">'
+            f'<strong>{r["away"]}</strong>{al}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
         # Preview text
         preview = generate_preview(
             r["home"], r["away"], r["prediction"], r["breakdown"], r["confidence"]
@@ -359,7 +416,7 @@ def render_match_card(r: dict) -> None:
         away_xi = lineup_data["away"]["lineup"]
 
         if home_xi or away_xi:
-            _render_pitch(r["home"], home_xi, r["away"], away_xi, probable)
+            _render_pitch(r["home"], home_xi, r["away"], away_xi, probable, home_crest, away_crest)
         else:
             xi_l, xi_r = st.columns(2)
             xi_l.caption(f"{r['home']} — Lineup not yet announced")
@@ -422,11 +479,26 @@ st.header("Auto Ticket Builder")
 st.caption("Today's picks only — sorted by Expected Value")
 
 if ticket and ticket.get("ticket"):
+    _crest_map = {r["match"]: (r.get("home_crest", ""), r.get("away_crest", "")) for r in today_results}
     for t in ticket["ticket"]:
-        kickoff_label = f" | {t['kickoff']}" if t.get("kickoff") else ""
-        st.write(
-            f"**{t['match']}**{kickoff_label}  \n"
-            f"{t['prediction']} — EV: {round(t.get('ev', 0), 3)} | Kelly: {round(t.get('kelly', 0), 3)}"
+        h_crest, a_crest = _crest_map.get(t["match"], ("", ""))
+        h_img = _logo_img(h_crest, 20)
+        a_img = _logo_img(a_crest, 20)
+        parts = t["match"].split(" vs ", 1)
+        home_part = parts[0] if parts else t["match"]
+        away_part = parts[1] if len(parts) > 1 else ""
+        kickoff_label = f"&nbsp;·&nbsp;{t['kickoff']}" if t.get("kickoff") else ""
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:6px;padding:7px 0;'
+            f'border-bottom:1px solid rgba(128,128,128,0.15);">'
+            f'{h_img}&nbsp;<strong>{home_part}</strong>'
+            f'<span style="color:#888;font-size:11px;margin:0 2px;">vs</span>'
+            f'<strong>{away_part}</strong>&nbsp;{a_img}'
+            f'<span style="color:#aaa;font-size:11px;margin-left:auto;">'
+            f'{t["prediction"]}&nbsp;·&nbsp;EV&nbsp;{round(t.get("ev", 0), 3)}'
+            f'&nbsp;|&nbsp;Kelly&nbsp;{round(t.get("kelly", 0), 3)}{kickoff_label}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
     st.success(f"Avg Confidence: {round(ticket.get('avg_confidence', 0), 2)}%")
 else:
