@@ -1,16 +1,17 @@
 import requests
 import os
+import logging
+import time
 import streamlit as st
 from dotenv import load_dotenv
-import time
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 API_KEY = os.getenv("football-data-api-key")
 
-HEADERS = {
-    "X-Auth-Token": API_KEY
-}
+HEADERS = {"X-Auth-Token": API_KEY}
 
 LEAGUE_CODES = {
     "Premier League": "PL",
@@ -21,67 +22,87 @@ LEAGUE_CODES = {
     "Liga Portugal": "PPL",
     "Eredivisie": "DED",
     "Championship": "ELC",
-    "Belgian Pro League": "BSA"
+    "Belgian Pro League": "BSA",
 }
 
 BASE_URL = "https://api.football-data.org/v4"
 
+_SEARCH_LEAGUES = ["PL", "PD", "SA", "BL1", "FL1", "PPL", "DED"]
 
-def make_request(url, max_retries=3):
-    """Make API request with retry logic for SSL errors"""
+
+def make_request(url: str, max_retries: int = 3):
+    delay = 1.0
     for attempt in range(max_retries):
         try:
             response = requests.get(url, headers=HEADERS, timeout=10)
+
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", delay))
+                logger.warning("Rate limited by football-data.org — waiting %ds", retry_after)
+                time.sleep(retry_after)
+                delay *= 2
+                continue
+
             response.raise_for_status()
             return response.json()
+
         except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
             if attempt < max_retries - 1:
-                time.sleep(1)
+                logger.warning("Connection error (attempt %d/%d): %s", attempt + 1, max_retries, e)
+                time.sleep(delay)
+                delay *= 2
                 continue
-            else:
-                print(f"API Error after {max_retries} retries: {e}")
-                return None
-        except Exception as e:
-            print(f"API Error: {e}")
+            logger.error("API failed after %d retries: %s", max_retries, e)
             return None
+
+        except requests.exceptions.HTTPError as e:
+            logger.error("HTTP error for %s: %s", url, e)
+            return None
+
+        except Exception as e:
+            logger.exception("Unexpected error for %s: %s", url, e)
+            return None
+
+    return None
 
 
 @st.cache_data(ttl=3600)
 def get_standings_for_leagues(leagues):
-    """Get standings for specified leagues"""
     all_standings = {}
-
     for league in leagues:
         league_code = LEAGUE_CODES.get(league, "PL")
         standings = get_league_standings(league_code)
         if standings:
             all_standings[league] = standings
-
     return all_standings
 
 
 @st.cache_data(ttl=3600)
-def get_league_standings(league_code):
-    """Fetch standings for a specific league"""
+def get_league_standings(league_code: str):
     url = f"{BASE_URL}/competitions/{league_code}/standings"
-
     data = make_request(url)
 
     if not data or "standings" not in data:
+        logger.warning("No standings data for league code: %s", league_code)
         return []
 
     standings = data["standings"][0]["table"]
 
-    # Convert to match old format for compatibility
-    converted = []
-    for team in standings:
-        converted.append({
+    return [
+        {
             "rank": team["position"],
             "team": {"name": team["team"]["name"]},
-            "points": team["points"]
-        })
-
-    return converted
+            "points": team["points"],
+            "playedGames": team.get("playedGames", 1),
+            "goalsFor": team.get("goalsFor", 0),
+            "goalsAgainst": team.get("goalsAgainst", 0),
+            "won": team.get("won", 0),
+            "draw": team.get("draw", 0),
+            "lost": team.get("lost", 0),
+            "position": team["position"],
+        }
+        for team in standings
+    ]
 
 
 @st.cache_data(ttl=3600)
@@ -90,11 +111,8 @@ def get_premier_league_standings():
 
 
 @st.cache_data(ttl=3600)
-def get_team_form(team_name):
-    """Get wins in last 5 matches"""
-
-    # Get team ID by searching in all competitions
-    for league_code in ["PL", "LA", "SA", "BL1", "FL1", "PPL", "DED"]:
+def get_team_form(team_name: str):
+    for league_code in _SEARCH_LEAGUES:
         url = f"{BASE_URL}/competitions/{league_code}/matches?status=FINISHED&limit=100"
         data = make_request(url)
 
@@ -104,14 +122,12 @@ def get_team_form(team_name):
         wins = 0
         match_count = 0
 
-        # Search through matches for this team
         for match in data["matches"]:
             home = match["homeTeam"]["name"]
             away = match["awayTeam"]["name"]
 
             if home == team_name or away == team_name:
                 match_count += 1
-
                 if match_count > 5:
                     break
 
@@ -130,11 +146,8 @@ def get_team_form(team_name):
 
 
 @st.cache_data(ttl=900)
-def get_team_goals(team_name):
-    """Get goals for and against for a team"""
-
-    # Search through all leagues for team stats
-    for league_code in ["PL", "LA", "SA", "BL1", "FL1", "PPL", "DED"]:
+def get_team_goals(team_name: str):
+    for league_code in _SEARCH_LEAGUES:
         url = f"{BASE_URL}/competitions/{league_code}/teams"
         data = make_request(url)
 
@@ -144,8 +157,6 @@ def get_team_goals(team_name):
         for team in data["teams"]:
             if team["name"] == team_name:
                 team_id = team["id"]
-
-                # Get team's matches
                 matches_url = f"{BASE_URL}/teams/{team_id}/matches?status=FINISHED&limit=100"
                 matches_data = make_request(matches_url)
 
@@ -172,9 +183,8 @@ def get_team_goals(team_name):
 
 
 @st.cache_data(ttl=900)
-def get_team_last5_form(team_name):
-    """Get W/D/L breakdown for team's last 5 matches"""
-    for league_code in ["PL", "LA", "SA", "BL1", "FL1", "PPL", "DED"]:
+def get_team_last5_form(team_name: str):
+    for league_code in _SEARCH_LEAGUES:
         url = f"{BASE_URL}/competitions/{league_code}/matches?status=FINISHED&limit=100"
         data = make_request(url)
 
@@ -218,11 +228,10 @@ def get_team_last5_form(team_name):
 
 
 @st.cache_data(ttl=900)
-def get_h2h_matches(home_team_name, away_team_name):
-    """Get last 5 H2H matches between two teams with scores"""
+def get_h2h_matches(home_team_name: str, away_team_name: str):
     h2h_matches = []
 
-    for league_code in ["PL", "LA", "SA", "BL1", "FL1", "PPL", "DED"]:
+    for league_code in _SEARCH_LEAGUES:
         url = f"{BASE_URL}/competitions/{league_code}/matches?status=FINISHED&limit=200"
         data = make_request(url)
 
@@ -239,11 +248,10 @@ def get_h2h_matches(home_team_name, away_team_name):
                     "home": home,
                     "away": away,
                     "home_goals": match["score"]["fullTime"]["home"],
-                    "away_goals": match["score"]["fullTime"]["away"]
+                    "away_goals": match["score"]["fullTime"]["away"],
                 })
 
         if len(h2h_matches) >= 5:
             break
 
-    h2h_matches = h2h_matches[:5]
-    return h2h_matches
+    return h2h_matches[:5]

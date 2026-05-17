@@ -1,137 +1,122 @@
+import logging
 import streamlit as st
 from datetime import datetime, timedelta, timezone
+import pytz
 
 from services.football_api import (
     get_standings_for_leagues,
     make_request,
     BASE_URL,
-    LEAGUE_CODES
+    LEAGUE_CODES,
 )
-
-from models.team_strength_model import get_team_strength
-from models.data_normalizer import register_team_stats, normalize_league
-
-from models.v7.prediction_engine import (
-    generate_prediction,
-    calculate_risk
-)
-
+from models.v7.prediction_engine import generate_prediction
 from models.v7.ticket_engine import build_ticket
+from models.data_normalizer import normalize_league, register_team_stats
+from models.team_strength_model import get_team_strength
+
+logging.basicConfig(level=logging.INFO)
+
+DISPLAY_TZ = pytz.timezone("Europe/Bucharest")
+
+MAX_MATCHES = 25
+REFRESH_COOLDOWN_SECONDS = 60
+
+ALL_LEAGUES = [
+    "Premier League",
+    "La Liga",
+    "Serie A",
+    "Bundesliga",
+    "Ligue 1",
+    "Liga Portugal",
+    "Eredivisie",
+    "Championship",
+    "Belgian Pro League",
+]
+
+st.set_page_config(page_title="V7 EDGE ENGINE", layout="wide")
+st.title("V7 REAL EDGE ENGINE")
 
 
-# =========================
-# CONFIG
-# =========================
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 
-st.set_page_config(
-    page_title="V7 EDGE ENGINE",
-    layout="wide"
-)
+with st.sidebar:
+    leagues = st.multiselect(
+        "Select leagues",
+        ALL_LEAGUES,
+        default=["Premier League", "La Liga", "Serie A"],
+    )
 
-st.title("🔥 V7 REAL EDGE ENGINE")
+    st.divider()
+
+    now = datetime.now(timezone.utc).timestamp()
+    last_refresh = st.session_state.get("last_refresh", 0)
+    seconds_since = now - last_refresh
+    can_refresh = seconds_since >= REFRESH_COOLDOWN_SECONDS
+
+    if st.button("Refresh predictions", disabled=not can_refresh):
+        st.cache_data.clear()
+        st.session_state["last_refresh"] = now
+        st.rerun()
+
+    if not can_refresh:
+        wait = int(REFRESH_COOLDOWN_SECONDS - seconds_since)
+        st.caption(f"Next refresh available in {wait}s")
 
 
-# =========================
-# MATCH FETCH
-# =========================
+# ── Data fetching ─────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=3600)
-def get_matches(leagues):
-
+def get_matches(leagues: tuple):
     all_matches = []
-
     today = datetime.now(timezone.utc).date()
     next_week = (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d")
 
     for league in leagues:
-
         code = LEAGUE_CODES.get(league)
         if not code:
             continue
 
         url = f"{BASE_URL}/competitions/{code}/matches?dateFrom={today}&dateTo={next_week}"
-
         data = make_request(url)
 
         if not data or "matches" not in data:
             continue
 
         for m in data["matches"]:
-            if m["status"] not in ["SCHEDULED", "TIMED", "IN_PLAY", "LIVE"]:
-                continue
-
-            all_matches.append(m)
+            if m["status"] in ("SCHEDULED", "TIMED", "IN_PLAY", "LIVE"):
+                all_matches.append(m)
 
     return all_matches
 
 
-# =========================
-# SIDEBAR
-# =========================
-
-with st.sidebar:
-
-    leagues = st.multiselect(
-        "Select leagues",
-        [
-            "Premier League",
-            "La Liga",
-            "Serie A",
-            "Bundesliga",
-            "Ligue 1",
-            "Liga Portugal",
-            "Eredivisie",
-            "Championship",
-            "Belgian Pro League"
-        ],
-
-        default=[
-            "Premier League",
-            "La Liga",
-            "Serie A"
-        ]
-    )
+@st.cache_data(ttl=3600)
+def cached_prediction(home: str, away: str, league: str, fixture_id):
+    return generate_prediction(home, away, league, fixture_id)
 
 
-# =========================
-# LOAD DATA
-# =========================
+# ── Engine loop ───────────────────────────────────────────────────────────────
 
 standings = get_standings_for_leagues(leagues)
-matches = get_matches(leagues)
+# cache_data requires hashable args — convert list to tuple
+matches = get_matches(tuple(leagues))
 
 results = []
-
-
-# =========================
-# ENGINE LOOP
-# =========================
-
-now_utc = datetime.now(timezone.utc)
-
-today = now_utc.date()
-
-start_day = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-end_day = now_utc.replace(hour=23, minute=59, second=59, microsecond=999999)
-
+processed = 0
 
 for m in matches:
+    if processed >= MAX_MATCHES:
+        break
+    processed += 1
 
-    # normalize kickoff
-    match_dt = datetime.fromisoformat(
-        m["utcDate"].replace("Z", "+00:00")
-    ).astimezone(timezone.utc)
-
-    # =========================
-    # 🔥 FIX: STRICT TODAY FILTER
-    # =========================
-    if not (start_day <= match_dt <= end_day):
-        continue
+    match_dt = (
+        datetime.fromisoformat(m["utcDate"].replace("Z", "+00:00"))
+        .astimezone(DISPLAY_TZ)
+    )
 
     home_name = m["homeTeam"]["name"]
     away_name = m["awayTeam"]["name"]
-
     league = normalize_league(m["competition"]["name"])
+    fixture_id = m.get("id")
 
     league_data = standings.get(league) or standings.get(m["competition"]["name"], [])
 
@@ -141,81 +126,73 @@ for m in matches:
     register_team_stats(home_name, league, home)
     register_team_stats(away_name, league, away)
 
-    prediction, reason, breakdown, edge, confidence = generate_prediction(
-    home_name,
-    away_name,
-    league
-)
-
-    risk = calculate_risk(confidence)
+    try:
+        prediction, reason, breakdown, edge, confidence = cached_prediction(
+            home_name, away_name, league, fixture_id
+        )
+    except Exception:
+        continue
 
     results.append({
         "match": f"{home_name} vs {away_name}",
-        "kickoff": match_dt.strftime("%d-%m-%Y %H:%M UTC"),
+        "kickoff": match_dt.strftime("%d-%m-%Y %H:%M %Z"),
         "prediction": prediction,
         "confidence": confidence,
-        "risk": risk,
         "reason": reason,
         "breakdown": breakdown,
-        "edge": edge
+        "edge": edge,
     })
 
 
-# =========================
-# SORT SAFE
-# =========================
+# ── Sort ──────────────────────────────────────────────────────────────────────
 
-results = sorted(
-    results,
-    key=lambda x: x.get("edge", {}).get("ev", 0),
-    reverse=True
-)
+results = sorted(results, key=lambda x: x.get("edge", {}).get("ev", 0), reverse=True)
 
 
-# =========================
-# DISPLAY
-# =========================
+# ── Display ───────────────────────────────────────────────────────────────────
 
-st.header("🔥 V7 EDGE PICKS")
+st.header("V7 EDGE PICKS")
 
-for r in results[:20]:
+if not results:
+    st.warning("No matches found for the selected leagues and time window.")
 
-    with st.expander(f"{r['match']} | {r['prediction']} ({round(r['confidence'],2)}%)"):
+for r in results:
+    is_fallback = r["breakdown"].get("is_fallback")
+    label = f"{r['match']} | {r['prediction']} ({round(r['confidence'], 2)}%)"
+    if is_fallback:
+        label += " ⚠ fallback data"
 
-        st.write("🕒 Kickoff:", r["kickoff"])
-        st.write(f"🎯 Prediction: {r['prediction']}")
-        st.write(f"⚡ Confidence: {round(r['confidence'], 2)}%")
-        st.write(f"⚠️ Risk: {r['risk']}")
+    with st.expander(label):
+        st.write("Kickoff:", r["kickoff"])
+        st.write(f"Prediction: {r['prediction']}")
+        st.write(f"Confidence: {round(r['confidence'], 2)}%")
+        st.write(f"EV: {round(r['edge'].get('ev', 0), 3)}")
+        st.write(f"Kelly: {round(r['edge'].get('kelly', 0), 3)}")
 
-        st.write(f"📊 EV: {round(r['edge'].get('ev', 0), 3)}")
-        st.write(f"💰 Kelly: {round(r['edge'].get('kelly', 0), 3)}")
+        if is_fallback:
+            st.warning("One or both teams used fallback stats — treat this pick with caution.")
 
         if r["edge"].get("value_bet"):
-            st.success("✔ VALUE BET")
+            st.success("VALUE BET")
         else:
             st.warning("No edge")
 
-        with st.expander("📊 Model details"):
+        with st.expander("Model details"):
             st.json(r["breakdown"])
 
 
-# =========================
-# AUTO TICKET
-# =========================
+# ── Auto ticket ───────────────────────────────────────────────────────────────
 
 ticket = build_ticket(results)
 
-st.header("💰 Auto Ticket Builder")
+st.header("Auto Ticket Builder")
 
 if ticket and ticket.get("ticket"):
-
     for t in ticket["ticket"]:
         st.write(
-            f"✔ {t['match']} → {t['prediction']} "
+            f"{t['match']} → {t['prediction']} "
             f"EV: {round(t.get('ev', 0), 3)} | Kelly: {round(t.get('kelly', 0), 3)}"
         )
-
     st.success(f"Avg Confidence: {round(ticket.get('avg_confidence', 0), 2)}%")
-
 else:
     st.warning("No value bets today")

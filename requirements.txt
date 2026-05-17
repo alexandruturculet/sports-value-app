@@ -1,5 +1,5 @@
-streamlit
-requests
-python-dotenv
-pytz
-scipy
+streamlit==1.45.1
+requests==2.32.3
+python-dotenv==1.1.0
+pytz==2025.2
+scipy==1.15.3
