@@ -18,10 +18,7 @@ from models.v7.match_preview import generate_preview
 from services.player_images import get_player_image_url
 from services.api_football import get_fixture_injuries
 from services.espn_api import get_espn_lineups, get_espn_last_lineup, get_espn_injuries
-from services.supabase_client import (
-    save_ticket, get_all_tickets, update_ticket_result,
-    reset_evaluated_tickets_to_pending,
-)
+from services.supabase_client import save_ticket, get_all_tickets, update_ticket_result
 from models.data_normalizer import normalize_league, register_team_stats
 from models.team_strength_model import get_team_strength
 
@@ -694,14 +691,6 @@ def _auto_evaluate_pending_tickets(today_str: str) -> None:
         if all_finished and outcomes:
             update_ticket_result(ticket["id"], "won" if all(outcomes) else "lost")
 
-
-# One-time migration: reset all previously evaluated tickets because the old
-# evaluation logic had a bug (compared "Home Win" to "1"/"BTTS" etc.).
-# The flag ensures this runs only once per deployment, not on every rerender.
-if not st.session_state.get("_tickets_migrated_v2"):
-    reset_evaluated_tickets_to_pending()
-    st.session_state["_tickets_migrated_v2"] = True
-    st.session_state.pop("_tickets_evaluated", None)  # force re-evaluation below
 
 # Run evaluation once per session (not on every rerender)
 if not st.session_state.get("_tickets_evaluated"):
