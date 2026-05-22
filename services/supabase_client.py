@@ -79,3 +79,32 @@ def update_ticket_result(ticket_id: str, result: str) -> bool:
     except Exception as e:
         logger.error("Failed to update ticket result: %s", e)
         return False
+
+
+def reset_evaluated_tickets_to_pending() -> int:
+    """Reset all won/lost tickets back to pending so they can be re-evaluated.
+    Returns the number of tickets reset."""
+    client = _get_client()
+    if not client:
+        return 0
+    try:
+        resp = (
+            client.table("tickets")
+            .select("id")
+            .in_("result", ["won", "lost"])
+            .execute()
+        )
+        ids = [row["id"] for row in (resp.data or [])]
+        if not ids:
+            return 0
+        client.table("tickets").update(
+            {
+                "result": "pending",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).in_("id", ids).execute()
+        logger.info("Reset %d tickets to pending for re-evaluation", len(ids))
+        return len(ids)
+    except Exception as e:
+        logger.error("Failed to reset tickets: %s", e)
+        return 0

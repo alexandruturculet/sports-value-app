@@ -1,5 +1,5 @@
 """
-Unit tests for the v7 prediction engines.
+Unit tests for the v7 prediction engines and ticket evaluation logic.
 Run with: pytest tests/
 """
 import math
@@ -172,3 +172,103 @@ class TestEloModel:
         update_elo("A", "B", goals_a=2, goals_b=1)
         total_after = get_elo("A") + get_elo("B")
         assert abs(total_before - total_after) < 1e-9
+
+
+# ─── _pick_won (ticket evaluation) ───────────────────────────────────────────
+
+# Import directly from the app module — we test the function in isolation
+import importlib.util, types
+
+def _load_pick_won():
+    """Load _pick_won from value.s_app without executing Streamlit UI code."""
+    src_path = os.path.join(os.path.dirname(__file__), "..", "value.s_app.py")
+    src = open(src_path, encoding="utf-8").read()
+    # Extract only the _pick_won function definition
+    lines = src.splitlines()
+    fn_lines = []
+    inside = False
+    for line in lines:
+        if line.startswith("def _pick_won("):
+            inside = True
+        if inside:
+            fn_lines.append(line)
+            if inside and line == "" and len(fn_lines) > 2:
+                break
+            if inside and fn_lines and len(fn_lines) > 1 and line.startswith("def ") and not line.startswith("def _pick_won"):
+                fn_lines.pop()
+                break
+    code = "\n".join(fn_lines)
+    ns: dict = {}
+    exec(compile(code, src_path, "exec"), ns)
+    return ns["_pick_won"]
+
+_pick_won = _load_pick_won()
+
+
+class TestPickWon:
+    # 1X2
+    def test_1_home_win(self):
+        assert _pick_won("1", 2, 0) is True
+
+    def test_1_away_win(self):
+        assert _pick_won("1", 0, 2) is False
+
+    def test_1_draw(self):
+        assert _pick_won("1", 1, 1) is False
+
+    def test_2_away_win(self):
+        assert _pick_won("2", 0, 1) is True
+
+    def test_2_home_win(self):
+        assert _pick_won("2", 2, 0) is False
+
+    def test_x_draw(self):
+        assert _pick_won("X", 1, 1) is True
+
+    def test_x_home_win(self):
+        assert _pick_won("X", 2, 1) is False
+
+    # Double chance
+    def test_1x_home_win(self):
+        assert _pick_won("1X", 2, 0) is True
+
+    def test_1x_draw(self):
+        assert _pick_won("1X", 0, 0) is True
+
+    def test_1x_away_win(self):
+        assert _pick_won("1X", 0, 2) is False
+
+    def test_x2_away_win(self):
+        assert _pick_won("X2", 0, 1) is True
+
+    def test_x2_draw(self):
+        assert _pick_won("X2", 1, 1) is True
+
+    def test_x2_home_win(self):
+        assert _pick_won("X2", 2, 0) is False
+
+    # BTTS
+    def test_btts_both_score(self):
+        assert _pick_won("BTTS", 1, 2) is True
+
+    def test_btts_only_home(self):
+        assert _pick_won("BTTS", 2, 0) is False
+
+    def test_btts_only_away(self):
+        assert _pick_won("BTTS", 0, 1) is False
+
+    def test_btts_no_goals(self):
+        assert _pick_won("BTTS", 0, 0) is False
+
+    # Over/Under 2.5
+    def test_over_2_5_three_goals(self):
+        assert _pick_won("Over 2.5", 2, 1) is True
+
+    def test_over_2_5_two_goals(self):
+        assert _pick_won("Over 2.5", 2, 0) is False
+
+    def test_under_2_5_two_goals(self):
+        assert _pick_won("Under 2.5", 1, 1) is True
+
+    def test_under_2_5_three_goals(self):
+        assert _pick_won("Under 2.5", 2, 1) is False
