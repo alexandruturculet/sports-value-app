@@ -14,11 +14,18 @@ def _cache_get(key: str):
     entry = _cache.get(key)
     if entry and time.monotonic() < entry[1]:
         return entry[0]
+    if entry:
+        del _cache[key]
     return None
 
 
 def _cache_set(key: str, value: dict) -> None:
-    _cache[key] = (value, time.monotonic() + _CACHE_TTL)
+    now = time.monotonic()
+    # Evict all expired entries to prevent unbounded growth
+    expired = [k for k, (_, exp) in _cache.items() if exp <= now]
+    for k in expired:
+        del _cache[k]
+    _cache[key] = (value, now + _CACHE_TTL)
 
 
 def fetch_team_stats(team_name: str, league: str) -> dict:

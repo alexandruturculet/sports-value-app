@@ -1,6 +1,7 @@
 import logging
 import os
 import streamlit as st
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 import pytz
 
@@ -243,11 +244,12 @@ today_results = [r for r in results if r["kickoff_date"] == today_local]
 upcoming_results = [r for r in results if r["kickoff_date"] > today_local]
 
 
-# ── Precompute lineup + injury data (all HTTP calls happen here, not inside expanders) ──
+# ── Precompute lineup + injury data (parallelized across matches) ──────────────
 
 _LINEUP_EMPTY = {"home": {"lineup": [], "bench": []}, "away": {"lineup": [], "bench": []}}
 
-for r in today_results:
+
+def _fetch_today_match_data(r: dict) -> None:
     date_str = r.get("kickoff_date_str", "")
     code = r.get("competition_code", "PL")
     confirmed = get_espn_lineups(r["home"], r["away"], code, date_str)
@@ -263,18 +265,30 @@ for r in today_results:
     if not r["_injuries"]["home"] and not r["_injuries"]["away"]:
         r["_injuries"] = get_espn_injuries(r["home"], r["away"], code, date_str)
 
-_tomorrow_str = (today_local + timedelta(days=2)).isoformat()
-for r in upcoming_results:
+
+def _fetch_upcoming_match_data(r: dict, tomorrow_str: str) -> None:
     r["_lineup"] = _LINEUP_EMPTY
     r["_probable"] = False
     date_str = r.get("kickoff_date_str", "")
     code = r.get("competition_code", "PL")
-    if date_str <= _tomorrow_str:
+    if date_str <= tomorrow_str:
         r["_injuries"] = get_fixture_injuries(r["home"], r["away"], date_str, code)
         if not r["_injuries"]["home"] and not r["_injuries"]["away"]:
             r["_injuries"] = get_espn_injuries(r["home"], r["away"], code, date_str)
     else:
         r["_injuries"] = {"home": [], "away": []}
+
+
+_tomorrow_str = (today_local + timedelta(days=2)).isoformat()
+
+with ThreadPoolExecutor(max_workers=8) as _ex:
+    _today_futures = {_ex.submit(_fetch_today_match_data, r): r for r in today_results}
+    _upcoming_futures = {_ex.submit(_fetch_upcoming_match_data, r, _tomorrow_str): r for r in upcoming_results}
+    for _f in as_completed({**_today_futures, **_upcoming_futures}):
+        try:
+            _f.result()
+        except Exception as _e:
+            logging.warning("Failed to fetch match data: %s", _e)
 
 
 # ── Render helpers ────────────────────────────────────────────────────────────
