@@ -54,7 +54,7 @@ _TV_SYMBOLS = {
     "celestia":         "BINANCE:TIAUSDT",
     "spectral":         "MEXC:SPECUSDT",
     "pyth-network":     "BINANCE:PYTHUSDT",
-    "io-net":           "BINANCE:IOUSDT",
+    "io-net":           "BYBIT:IOUSDT",
     "heroes-of-mavia":  "BINANCE:MAVIAUSDT",
     "echelon-prime":    "COINBASE:PRIMEUSDT",
     "verasity":         "KUCOIN:VRAUSDT",
