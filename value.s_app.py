@@ -148,6 +148,11 @@ with st.sidebar:
         wait = int(REFRESH_COOLDOWN_SECONDS - seconds_since)
         st.caption(f"Next refresh available in {wait}s")
 
+    st.divider()
+    _admin_pw = os.getenv("ADMIN_PASSWORD", "")
+    _entered_pw = st.text_input("Admin", type="password", placeholder="Password", label_visibility="collapsed")
+    is_admin = bool(_admin_pw and _entered_pw == _admin_pw)
+
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
@@ -748,3 +753,12 @@ else:
                     f"**{_p['match']}** — {_p['prediction']} "
                     f"— EV: {round(_p.get('ev', 0), 3)} | Kelly: {round(_p.get('kelly', 0), 3)}"
                 )
+
+            if is_admin:
+                _ov_col1, _ov_col2, _ov_col3 = st.columns([1, 1, 3])
+                if _ov_col1.button("✅ Won", key=f"won_{_t['id']}"):
+                    update_ticket_result(_t["id"], "won")
+                    st.rerun()
+                if _ov_col2.button("❌ Lost", key=f"lost_{_t['id']}"):
+                    update_ticket_result(_t["id"], "lost")
+                    st.rerun()
