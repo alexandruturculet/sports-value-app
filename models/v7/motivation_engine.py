@@ -19,11 +19,15 @@ def _league_zones(total: int) -> tuple[int, int]:
 def _find_team_row(name: str, standings: list) -> dict | None:
     name_l = name.lower()
     for row in standings:
-        team = (row.get("name") or row.get("team", "")).lower()
+        if not isinstance(row, dict):
+            continue
+        team = str(row.get("name") or row.get("team") or "").lower()
         if team == name_l:
             return row
     for row in standings:
-        team = (row.get("name") or row.get("team", "")).lower()
+        if not isinstance(row, dict):
+            continue
+        team = str(row.get("name") or row.get("team") or "").lower()
         if name_l in team or team in name_l:
             return row
     return None
