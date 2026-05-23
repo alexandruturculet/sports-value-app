@@ -48,9 +48,12 @@ def apply_motivation_adjustment(confidence: float, motivation: dict, market: str
         else:
             adjustment = -5.0  # mismatched intent breaks the draw
     elif market in ("BTTS", "Over 2.5"):
-        if home >= 2 and away >= 2:
+        total = home + away
+        if total >= 4:             # both HIGH → open, attacking game
             adjustment = 5.0
-        elif home == 0 or away == 0:
+        elif total >= 3:           # HIGH + MEDIUM → one side pushing hard
+            adjustment = 2.5
+        elif min(home, away) == 0: # at least one LOW → may park the bus
             adjustment = -3.0
         else:
             adjustment = 0.0
