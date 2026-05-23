@@ -505,6 +505,14 @@ def _render_motivation_section(r: dict, motivation: dict | None, base_conf: floa
             '</div>',
             unsafe_allow_html=True,
         )
+        if fixture_id and st.button("↻ Re-analyze", key=f"mot_reanalyze_{fixture_id}", help="Re-run with latest standings"):
+            league = r.get("league", "")
+            league_standings = standings.get(league, []) if league else []
+            analysis = analyze_motivation(r["home"], r["away"], league, league_standings)
+            if save_motivation(int(fixture_id), r["home"], r["away"], analysis):
+                _cached_motivation.clear()
+            st.session_state[f"_mot_{fixture_id}"] = analysis
+            st.rerun()
         return
 
     if not fixture_id:
