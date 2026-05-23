@@ -34,7 +34,7 @@ def _find_team_row(name: str, standings: list) -> dict | None:
 
 
 def _pts_at_position(standings: list, target_pos: int) -> int | None:
-    """Return the points of the team sitting at target_pos, or None if not found."""
+    """Return the points of the team at target_pos, or None if not found."""
     for row in standings:
         if isinstance(row, dict) and row.get("position") == target_pos:
             return row.get("points") or 0
@@ -64,63 +64,70 @@ def _assess_team(name: str, standings: list, total: int, rel_start: int, eur_end
     games_left = max(0, full_season - played)
     max_pts = pts + games_left * 3
 
-    safety_pts = _pts_at_position(standings, rel_start - 1)   # points of last safe team
-    eur_cutoff_pts = _pts_at_position(standings, eur_end)      # points of last European spot
+    # Reference points — used for mathematical checks
+    safety_pts    = _pts_at_position(standings, rel_start - 1)  # last safe team
+    rel_top_pts   = _pts_at_position(standings, rel_start)       # best relegated team
+    leader_pts    = _pts_at_position(standings, 1)
+    eur_cutoff_pts = _pts_at_position(standings, eur_end)        # last European spot
+    eur_next_pts  = _pts_at_position(standings, eur_end + 1)     # first team outside Europe
 
     level = 1  # MEDIUM by default
     factors = []
 
-    # --- Mathematical relegation: in the zone AND can no longer catch safety line ---
+    # ── Mathematical relegation: in the zone AND can no longer catch safety line ──
     if pos >= rel_start and safety_pts is not None and max_pts < safety_pts:
         return "LOW", [f"Already relegated (P{pos})"]
 
-    # --- Relegation pressure ---
-    if pos >= total - 1:
-        factors.append("In relegation zone")
-        level = 2
-    elif pos >= rel_start:
+    # ── Relegation pressure (points-gap based, not position-based) ──────────────
+    if pos >= rel_start:
+        # Still in the zone and mathematically alive
         factors.append(f"Relegation battle (P{pos})")
-        level = max(level, 2 if stage >= 0.5 else 1)
+        level = max(level, 2)
+    elif rel_top_pts is not None:
+        rel_zone_max = rel_top_pts + games_left * 3
+        if rel_zone_max >= pts:
+            # Best relegated team can mathematically catch this team
+            pts_gap = pts - rel_top_pts
+            if pts_gap <= 3:
+                factors.append(f"Relegation danger (P{pos}, {pts_gap}pt gap)")
+                level = max(level, 2 if stage >= 0.4 else 1)
+            else:
+                factors.append(f"Watching relegation zone (P{pos})")
+                level = max(level, 1)
     elif pos >= rel_start - 2:
-        factors.append(f"Near relegation danger (P{pos})")
+        # Fallback when points data missing
+        factors.append(f"Near relegation (P{pos})")
         level = max(level, 2 if stage >= 0.7 else 1)
 
-    # --- Title race ---
-    leader_pts = _pts_at_position(standings, 1)
+    # ── Title race ───────────────────────────────────────────────────────────────
     if pos == 1:
         factors.append("Title leaders")
         level = max(level, 2)
     elif pos <= 3 and stage >= 0.4:
-        # Only a real title race if the team can still mathematically reach P1
         if leader_pts is None or max_pts >= leader_pts:
             factors.append(f"Title contender (P{pos})")
             level = max(level, 2)
 
-    # --- Champions League spot ---
-    if pos == 4 and stage >= 0.5:
-        # Only relevant if P3 can still be caught (or team can still be displaced from P4)
-        p3_pts = _pts_at_position(standings, 3)
-        p5_pts = _pts_at_position(standings, 5)
-        cl_contested = (p3_pts is None or max_pts >= p3_pts) or (p5_pts is not None and p5_pts + games_left * 3 >= pts)
-        if cl_contested:
-            factors.append("Champions League race (P4)")
-            level = max(level, 2 if stage >= 0.65 else 1)
-
-    # --- Europa / Conference League ---
-    if 4 < pos <= eur_end:
-        # Only relevant if team can still mathematically reach the cutoff or be displaced
-        if eur_cutoff_pts is None or max_pts >= eur_cutoff_pts:
-            factors.append(f"European race (P{pos})")
+    # ── CL / European spots ──────────────────────────────────────────────────────
+    if 3 < pos <= eur_end:
+        # Currently IN a European spot — check if it can be taken away
+        if eur_next_pts is not None and eur_next_pts + games_left * 3 >= pts:
+            spot_label = "CL" if pos <= 4 else "European"
+            pts_gap = pts - eur_next_pts
+            factors.append(f"{spot_label} place at stake (P{pos}, {pts_gap}pt lead)")
+            level = max(level, 2 if stage >= 0.5 else 1)
+        else:
+            factors.append(f"European spot secured (P{pos})")
             level = max(level, 1)
+    elif pos <= eur_end + 2 and eur_cutoff_pts is not None and max_pts >= eur_cutoff_pts:
+        # Just outside Europe but can still reach it
+        factors.append(f"Chasing European spot (P{pos})")
+        level = max(level, 2 if stage >= 0.6 else 1)
 
-    # --- Dead rubber: mathematically can't reach Europe AND safe from relegation ---
-    safe_from_rel = pos < rel_start - 3
-    if eur_cutoff_pts is not None:
-        cant_reach_europe = max_pts < eur_cutoff_pts
-    else:
-        cant_reach_europe = pos > eur_end + 2 and stage >= 0.8
-
-    if safe_from_rel and cant_reach_europe and level <= 1:
+    # ── Dead rubber: safe from rel AND mathematically can't reach Europe ─────────
+    rel_safe = rel_top_pts is not None and (rel_top_pts + games_left * 3) < pts
+    cant_europe = eur_cutoff_pts is not None and max_pts < eur_cutoff_pts
+    if rel_safe and cant_europe and level <= 1:
         factors.append("Nothing to play for")
         level = 0
 
