@@ -29,16 +29,19 @@ def _get(url: str, params: dict = None) -> dict | list:
 
 
 @st.cache_data(ttl=300)
-def get_market_overview(coin_ids: tuple) -> list:
+def get_market_overview(coin_ids: tuple, include_sparkline: bool = False) -> list:
     """Price + 24h/7d change for a specific list of coin ids."""
-    data = _get(f"{_CG_BASE}/coins/markets", params={
+    params = {
         "vs_currency": "usd",
         "ids": ",".join(coin_ids),
         "price_change_percentage": "24h,7d",
         "order": "market_cap_desc",
         "per_page": len(coin_ids),
         "page": 1,
-    })
+    }
+    if include_sparkline:
+        params["sparkline"] = "true"
+    data = _get(f"{_CG_BASE}/coins/markets", params=params)
     return data if isinstance(data, list) else []
 
 

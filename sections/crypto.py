@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from services.coingecko import get_market_overview, get_top_coins, get_fear_greed
 from services.cryptopanic import get_news
 
@@ -43,6 +44,22 @@ _SIG_STYLE = {
 }
 _SIG_ORDER = {"STRONG BUY": 0, "BUY": 1, "HOLD": 2, "SELL": 3, "STRONG SELL": 4}
 
+# ── TradingView symbol map ────────────────────────────────────────────────────
+_TV_SYMBOLS = {
+    "render-token":     "BINANCE:RENDERUSDT",
+    "fetch-ai":         "BINANCE:FETUSDT",
+    "peaq-2":           "KUCOIN:PEAQUSDT",
+    "aioz-network":     "BINANCE:AIOZUSDT",
+    "celestia":         "BINANCE:TIAUSDT",
+    "spectral":         "MEXC:SPECUSDT",
+    "pyth-network":     "BINANCE:PYTHUSDT",
+    "io-net":           "BINANCE:IOUSDT",
+    "heroes-of-mavia":  "BINANCE:MAVIAUSDT",
+    "echelon-prime":    "COINBASE:PRIMEUSDT",
+    "verasity":         "KUCOIN:VRAUSDT",
+    "crypto-com-chain": "KRAKEN:CROUSD",
+}
+
 _FNG_RANGES = [
     (range(0, 26),   "Extreme Fear",  "#f44336"),
     (range(26, 46),  "Fear",          "#ff9800"),
@@ -57,6 +74,63 @@ def _fng_label(value: int):
         if value in r:
             return label, color
     return "Neutral", "#9e9e9e"
+
+
+def _sparkline_svg(prices: list, width: int = 80, height: int = 28) -> str:
+    if not prices or len(prices) < 2:
+        return f'<div style="width:{width}px;height:{height}px;flex-shrink:0;"></div>'
+    step = max(1, len(prices) // 50)
+    sampled = prices[::step]
+    if len(sampled) < 2:
+        return f'<div style="width:{width}px;height:{height}px;flex-shrink:0;"></div>'
+    mn, mx = min(sampled), max(sampled)
+    if mn == mx:
+        return f'<div style="width:{width}px;height:{height}px;flex-shrink:0;"></div>'
+    pad = 2
+    n = len(sampled)
+    x_step = (width - pad * 2) / (n - 1)
+    pts = []
+    for i, p in enumerate(sampled):
+        x = round(pad + i * x_step, 1)
+        y = round(height - pad - (p - mn) / (mx - mn) * (height - pad * 2), 1)
+        pts.append(f"{x},{y}")
+    color = "#2ea043" if sampled[-1] >= sampled[0] else "#da3633"
+    return (
+        f'<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" '
+        f'style="flex-shrink:0;overflow:visible;">'
+        f'<polyline points="{" ".join(pts)}" fill="none" stroke="{color}" '
+        f'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+        f'stroke-dasharray="1000" stroke-dashoffset="1000">'
+        f'<animate attributeName="stroke-dashoffset" from="1000" to="0" dur="1.2s" '
+        f'fill="freeze" calcMode="spline" keySplines="0.4 0 0.2 1" keyTimes="0;1"/>'
+        f'</polyline>'
+        f'</svg>'
+    )
+
+
+def _render_tradingview(coin_id: str) -> None:
+    symbol = _TV_SYMBOLS.get(coin_id, "")
+    if not symbol:
+        st.caption("No TradingView symbol mapped for this coin.")
+        return
+    safe_id = coin_id.replace("-", "_")
+    widget_html = (
+        f'<div style="height:430px;">'
+        f'<div id="tv_{safe_id}" style="height:100%;"></div>'
+        f'<script src="https://s3.tradingview.com/tv.js"></script>'
+        f'<script>'
+        f'new TradingView.widget({{'
+        f'  width:"100%",height:430,'
+        f'  symbol:"{symbol}",'
+        f'  interval:"D",timezone:"Europe/Bucharest",'
+        f'  theme:"dark",style:"1",locale:"en",'
+        f'  allow_symbol_change:true,hide_top_toolbar:false,'
+        f'  container_id:"tv_{safe_id}"'
+        f'}});'
+        f'</script>'
+        f'</div>'
+    )
+    components.html(widget_html, height=440, scrolling=False)
 
 
 def _pct(pct: float | None, small: bool = False) -> str:
@@ -114,7 +188,7 @@ def _locked_pct(coin: dict) -> str:
     return f'<span style="color:{color}">{locked:.1f}%</span>'
 
 
-def _portfolio_row(coin_id: str, coin_data: dict | None, total_value: float) -> str:
+def _portfolio_row(coin_id: str, coin_data: dict | None, total_value: float, sparkline_prices: list = None) -> str:
     meta = _PORTFOLIO[coin_id]
     qty = meta["qty"]
     symbol = meta["symbol"]
@@ -163,6 +237,8 @@ def _portfolio_row(coin_id: str, coin_data: dict | None, total_value: float) -> 
         f'border-radius:1px;"></div></div>'
     ) if price else ""
 
+    spark = _sparkline_svg(sparkline_prices or [])
+
     return (
         f'<div style="background:#0a0a0a;border:1px solid #1c1c1c;border-left:3px solid {border_col};'
         f'border-radius:8px;padding:11px 14px;margin-bottom:5px;">'
@@ -175,6 +251,7 @@ def _portfolio_row(coin_id: str, coin_data: dict | None, total_value: float) -> 
         f'<div style="color:#4a4a4a;font-size:10px;margin-top:2px;">{qty_str} tokens</div>'
         f'</div>'
         f'</div>'
+        f'{spark}'
         f'<div style="text-align:center;flex-shrink:0;min-width:76px;">'
         f'<div style="font-size:11px;color:#666;margin-bottom:2px;">{price_str}</div>'
         f'{_pct(p24, True)}'
@@ -248,7 +325,7 @@ def render():
     # ── Portfolio ──────────────────────────────────────────────────────────────
     st.markdown("### My Portfolio")
     with st.spinner("Loading portfolio…"):
-        portfolio_coins = get_market_overview(_PORTFOLIO_IDS)
+        portfolio_coins = get_market_overview(_PORTFOLIO_IDS, include_sparkline=True)
 
     if portfolio_coins:
         lookup = {c["id"]: c for c in portfolio_coins}
@@ -319,7 +396,14 @@ def render():
         )
 
         for coin_id, cd, _ in rows:
-            st.markdown(_portfolio_row(coin_id, cd, total_value), unsafe_allow_html=True)
+            sparkline_prices = []
+            if cd:
+                sparkline_prices = (cd.get("sparkline_in_7d") or {}).get("price") or []
+            st.markdown(_portfolio_row(coin_id, cd, total_value, sparkline_prices), unsafe_allow_html=True)
+            if coin_id in _TV_SYMBOLS:
+                sym = _PORTFOLIO[coin_id]["symbol"]
+                with st.expander(f"📈 {sym} — TradingView chart"):
+                    _render_tradingview(coin_id)
     else:
         st.info("Portfolio data unavailable — CoinGecko may be rate-limited. Try again in a moment.")
 
