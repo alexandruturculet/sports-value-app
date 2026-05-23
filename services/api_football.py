@@ -2,6 +2,7 @@ import os
 import re
 import logging
 import requests
+import urllib.parse
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -215,11 +216,14 @@ def _get_team_id(team_name: str, competition_code: str) -> int | None:
     if not league_id:
         return None
     season = _current_season()
-    data = _get(f"{BASE_URL}/teams?name={team_name}&league={league_id}&season={season}")
-    teams = data.get("response", [])
-    if teams:
-        return teams[0]["team"]["id"]
-    data = _get(f"{BASE_URL}/teams?search={team_name[:5]}&league={league_id}&season={season}")
+    normalized = _normalize(team_name).title()
+    for name in [team_name, normalized]:
+        enc = urllib.parse.quote(name)
+        data = _get(f"{BASE_URL}/teams?name={enc}&league={league_id}&season={season}")
+        if data.get("response"):
+            return data["response"][0]["team"]["id"]
+    first_word = urllib.parse.quote(team_name.split()[0])
+    data = _get(f"{BASE_URL}/teams?search={first_word}&league={league_id}&season={season}")
     for t in data.get("response", []):
         if _names_match(team_name, t["team"]["name"]):
             return t["team"]["id"]
