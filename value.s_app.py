@@ -126,10 +126,12 @@ st.markdown("""
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
+    st.markdown("### ⚽ Leagues")
     leagues = st.multiselect(
         "Select leagues",
         ALL_LEAGUES,
         default=["Premier League", "La Liga", "Serie A"],
+        label_visibility="collapsed",
     )
 
     st.divider()
@@ -139,18 +141,27 @@ with st.sidebar:
     seconds_since = now - last_refresh
     can_refresh = seconds_since >= REFRESH_COOLDOWN_SECONDS
 
-    if st.button("Refresh predictions", disabled=not can_refresh):
+    if st.button("🔄 Refresh predictions", disabled=not can_refresh, use_container_width=True):
         st.cache_data.clear()
         st.session_state["last_refresh"] = now
         st.rerun()
 
     if not can_refresh:
         wait = int(REFRESH_COOLDOWN_SECONDS - seconds_since)
-        st.caption(f"Next refresh available in {wait}s")
+        st.markdown(
+            f'<div style="text-align:center;font-size:11px;color:#555;margin-top:4px;">Next refresh in {wait}s</div>',
+            unsafe_allow_html=True,
+        )
+    elif last_refresh:
+        _last_str = datetime.fromtimestamp(last_refresh, tz=DISPLAY_TZ).strftime("%H:%M")
+        st.markdown(
+            f'<div style="text-align:center;font-size:11px;color:#555;margin-top:4px;">Last refreshed {_last_str}</div>',
+            unsafe_allow_html=True,
+        )
 
     st.divider()
     _admin_pw = os.getenv("ADMIN_PASSWORD", "")
-    _entered_pw = st.text_input("Admin", type="password", placeholder="Password", label_visibility="collapsed")
+    _entered_pw = st.text_input("Admin", type="password", placeholder="Admin password", label_visibility="collapsed")
     is_admin = bool(_admin_pw and _entered_pw == _admin_pw)
 
 
@@ -319,6 +330,51 @@ def _short_name(name: str) -> str:
     return parts[-1][:12] if len(parts) > 1 else name[:12]
 
 
+_PRED_STYLE = {
+    "1":         ("#1e4d1e", "#5dd65d"),
+    "2":         ("#1a1e4d", "#5d8af5"),
+    "X":         ("#4a4220", "#f5d45d"),
+    "1X":        ("#1e3d2a", "#5dd680"),
+    "X2":        ("#2a1e3d", "#8a5df5"),
+    "BTTS":      ("#1a3d4d", "#5dd4f5"),
+    "Over 2.5":  ("#4d3a1a", "#f5a45d"),
+    "Under 2.5": ("#3a1a4d", "#a45df5"),
+}
+
+
+def _conf_color(conf: float) -> str:
+    if conf >= 72:
+        return "#4caf50"
+    if conf >= 58:
+        return "#ff9800"
+    return "#f44336"
+
+
+def _bar_row(label: str, home_name: str, home_val: float,
+             away_name: str, away_val: float,
+             home_color: str = "#5dd65d", away_color: str = "#5d8af5") -> str:
+    mx = max(home_val, away_val, 0.01)
+    h_pct = min(home_val / mx * 100, 100)
+    a_pct = min(away_val / mx * 100, 100)
+    ns = "font-size:11px;color:#ddd;width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;"
+    bb = "height:7px;background:#1e1e1e;border-radius:4px;overflow:hidden;flex:1;"
+    return (
+        f'<div style="margin:8px 0 2px;">'
+        f'<div style="font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;">{label}</div>'
+        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">'
+        f'<span style="{ns}">{home_name}</span>'
+        f'<div style="{bb}"><div style="width:{h_pct:.0f}%;height:100%;background:{home_color};border-radius:4px;"></div></div>'
+        f'<span style="font-size:11px;font-weight:700;color:{home_color};width:34px;">{home_val:.2f}</span>'
+        f'</div>'
+        f'<div style="display:flex;align-items:center;gap:8px;">'
+        f'<span style="{ns}">{away_name}</span>'
+        f'<div style="{bb}"><div style="width:{a_pct:.0f}%;height:100%;background:{away_color};border-radius:4px;"></div></div>'
+        f'<span style="font-size:11px;font-weight:700;color:{away_color};width:34px;">{away_val:.2f}</span>'
+        f'</div>'
+        f'</div>'
+    )
+
+
 def _logo_img(url: str, size: int = 20) -> str:
     if not url:
         return ""
@@ -432,35 +488,78 @@ def _render_pitch(home_name: str, home_xi: list, away_name: str, away_xi: list, 
 
 def render_match_card(r: dict) -> None:
     is_fallback = r["breakdown"].get("is_fallback")
-    value_badge = " ✔ VALUE" if r["edge"].get("value_bet") else ""
-    label = f"{r['match']} | {r['prediction']} ({round(r['confidence'], 2)}%){value_badge}"
+    conf = round(r["confidence"], 1)
+    ev = round(r["edge"].get("ev", 0), 3)
+    kelly = round(r["edge"].get("kelly", 0), 3)
+    is_value = r["edge"].get("value_bet")
+    pred = r["prediction"]
     home_crest = r.get("home_crest", "")
     away_crest = r.get("away_crest", "")
 
+    val_star = " ⭐" if is_value else ""
+    label = f"{r['home']} vs {r['away']}  ·  {pred}  ·  {conf}%{val_star}"
+
     with st.expander(label):
-        # Match header with team logos
-        hl = _logo_img(home_crest, 24)
-        al = _logo_img(away_crest, 24)
+        # ── Match header ──────────────────────────────────────────
+        hl = _logo_img(home_crest, 28)
+        al = _logo_img(away_crest, 28)
+        conf_col = _conf_color(conf)
+        pred_bg, pred_fg = _PRED_STYLE.get(pred, ("#333", "#fff"))
+        ev_col = "#4caf50" if ev > 0 else "#f44336"
+        val_badge = (
+            '<span style="background:#0d2d0d;color:#5dd65d;padding:3px 10px;border-radius:20px;'
+            'font-size:11px;font-weight:700;border:1px solid rgba(93,214,93,0.3);">⭐ VALUE BET</span>'
+            if is_value else
+            '<span style="background:#1e1010;color:#666;padding:3px 10px;border-radius:20px;'
+            'font-size:11px;border:1px solid rgba(255,255,255,0.08);">No edge</span>'
+        )
+        fallback_note = (
+            ' &nbsp;<span style="background:#2d2000;color:#e6a817;padding:2px 8px;border-radius:4px;'
+            'font-size:10px;">⚠ Fallback stats</span>' if is_fallback else ""
+        )
+        xg_h = r["breakdown"]["xg"]["home"]
+        xg_a = r["breakdown"]["xg"]["away"]
+
         st.markdown(
-            f'<div style="display:flex;align-items:center;justify-content:center;gap:10px;'
-            f'padding:2px 0 10px;">'
-            f'<div style="display:flex;align-items:center;gap:6px;">'
-            f'{hl}<strong>{r["home"]}</strong></div>'
-            f'<span style="color:#888;font-size:12px;">vs</span>'
-            f'<div style="display:flex;align-items:center;gap:6px;">'
-            f'<strong>{r["away"]}</strong>{al}</div>'
-            f'</div>',
+            '<div style="padding:4px 0 12px;">'
+            f'<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:16px;">'
+            f'<div style="display:flex;align-items:center;gap:7px;">{hl}<strong style="font-size:15px;">{r["home"]}</strong></div>'
+            f'<span style="color:#444;font-size:11px;padding:2px 8px;border:1px solid #2a2a2a;border-radius:4px;">vs</span>'
+            f'<div style="display:flex;align-items:center;gap:7px;"><strong style="font-size:15px;">{r["away"]}</strong>{al}</div>'
+            f'</div>'
+            f'<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px;">'
+            f'<span style="background:{pred_bg};color:{pred_fg};padding:5px 14px;border-radius:20px;font-size:14px;font-weight:700;">{pred}</span>'
+            f'<div style="flex:1;min-width:100px;">'
+            f'<div style="display:flex;justify-content:space-between;margin-bottom:3px;">'
+            f'<span style="font-size:10px;color:#666;">Confidence</span>'
+            f'<span style="font-size:10px;color:{conf_col};font-weight:700;">{conf}%</span>'
+            f'</div>'
+            f'<div style="height:5px;background:#1e1e1e;border-radius:3px;overflow:hidden;">'
+            f'<div style="width:{conf}%;height:100%;background:{conf_col};border-radius:3px;"></div>'
+            f'</div></div>'
+            f'<div style="display:flex;gap:16px;">'
+            f'<div style="text-align:center;">'
+            f'<div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">EV</div>'
+            f'<div style="font-size:14px;font-weight:700;color:{ev_col};">{ev:+.3f}</div>'
+            f'</div>'
+            f'<div style="text-align:center;">'
+            f'<div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Kelly</div>'
+            f'<div style="font-size:14px;font-weight:700;">{kelly:.3f}</div>'
+            f'</div></div>'
+            f'{val_badge}'
+            f'</div>'
+            + _bar_row("Expected Goals (xG)", r["home"], xg_h, r["away"], xg_a)
+            + f'<div style="font-size:11px;color:#666;margin-top:10px;">🕐 {r["kickoff"]}{fallback_note}</div>'
+            '</div>',
             unsafe_allow_html=True,
         )
 
-        # Preview text
-        preview = generate_preview(
-            r["home"], r["away"], r["prediction"], r["breakdown"], r["confidence"]
-        )
+        # Preview
+        preview = generate_preview(r["home"], r["away"], pred, r["breakdown"], r["confidence"])
         st.markdown(f"_{preview}_")
         st.divider()
 
-        # Key player cards — compact inline scorer strip
+        # Top scorers
         home_player, home_wiki, home_goals, home_assists = get_top_scorer_for_team(r["home"], r["competition_code"])
         away_player, away_wiki, away_goals, away_assists = get_top_scorer_for_team(r["away"], r["competition_code"])
 
@@ -474,20 +573,16 @@ def render_match_card(r: dict) -> None:
                     continue
                 img_url = get_player_image_url(wiki)
                 img_el = (
-                    f'<img src="{img_url}" style="width:72px;height:72px;border-radius:50%;'
-                    f'object-fit:cover;flex-shrink:0;">'
+                    f'<img src="{img_url}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;flex-shrink:0;">'
                     if img_url else
                     '<div style="width:72px;height:72px;border-radius:50%;background:#2a2a2a;flex-shrink:0;"></div>'
                 )
                 cards_html.append(
                     f'<div style="flex:1 1 180px;display:flex;align-items:center;gap:10px;padding:10px 14px;'
                     f'border-radius:8px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);">'
-                    f'{img_el}'
-                    f'<div style="min-width:0;">'
-                    f'<div style="font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.5px;'
-                    f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">TOP SCORER · {team}</div>'
-                    f'<div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;'
-                    f'text-overflow:ellipsis;">{player}</div>'
+                    f'{img_el}<div style="min-width:0;">'
+                    f'<div style="font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">TOP SCORER · {team}</div>'
+                    f'<div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{player}</div>'
                     f'<div style="font-size:11px;color:#888;margin-top:2px;">⚽ {goals} &nbsp;·&nbsp; {assists} assists</div>'
                     f'</div></div>'
                 )
@@ -496,26 +591,8 @@ def render_match_card(r: dict) -> None:
                     '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px;">' + "".join(cards_html) + "</div>",
                     unsafe_allow_html=True,
                 )
-            st.divider()
 
-        # Stats
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Prediction", r["prediction"])
-        c2.metric("Confidence", f"{round(r['confidence'], 1)}%")
-        c3.metric("EV", round(r["edge"].get("ev", 0), 3))
-        c4.metric("Kelly", round(r["edge"].get("kelly", 0), 3))
-
-        st.write("**Kickoff:**", r["kickoff"])
-
-        if is_fallback:
-            st.warning("One or both teams used fallback stats — treat this pick with caution.")
-
-        if r["edge"].get("value_bet"):
-            st.success("VALUE BET")
-        else:
-            st.warning("No edge detected")
-
-        # Starting XI + Absents  (data pre-fetched before render loop)
+        # Starting XI
         st.divider()
         lineup_data = r["_lineup"]
         probable = r["_probable"]
@@ -530,6 +607,7 @@ def render_match_card(r: dict) -> None:
             xi_l.caption(f"{r['home']} — Lineup not yet announced")
             xi_r.caption(f"{r['away']} — Lineup not yet announced")
 
+        # Injuries
         home_inj = injuries.get("home", [])
         away_inj = injuries.get("away", [])
         if home_inj or away_inj:
@@ -572,16 +650,22 @@ def render_match_card(r: dict) -> None:
                     del st.session_state[_stats_key]
                     st.rerun()
             else:
-                st.markdown("**Season Stats**")
-                _sc1, _sc2 = st.columns(2)
-                for _col, _tname, _ts in [(_sc1, r["home"], _hs), (_sc2, r["away"], _as)]:
-                    with _col:
-                        _played = _ts.get("played", "")
-                        _label = f"**{_tname}**" + (f" *({_played} games)*" if _played else "")
-                        st.markdown(_label)
-                        st.write(f"🟨 Yellow: {_ts.get('avg_yellow', '—')}/game")
-                        st.write(f"🟥 Red: {_ts.get('avg_red', '—')}/game")
-                        st.write(f"⛳ Corners FT: {_ts.get('avg_corners_ft', '—')}/game")
+                played = _hs.get("played") or _as.get("played") or "?"
+                _bars = f'<div style="padding:4px 0;"><div style="font-size:10px;color:#555;margin-bottom:10px;">Season averages · {played} games</div>'
+                hy = _hs.get("avg_yellow") or 0
+                ay = _as.get("avg_yellow") or 0
+                hr = _hs.get("avg_red") or 0
+                ar = _as.get("avg_red") or 0
+                hc = _hs.get("avg_corners_ft") or 0
+                ac = _as.get("avg_corners_ft") or 0
+                if hy or ay:
+                    _bars += _bar_row("🟨 Yellow cards / game", r["home"], hy, r["away"], ay, "#f5d45d", "#f5d45d")
+                if hr or ar:
+                    _bars += _bar_row("🟥 Red cards / game", r["home"], hr, r["away"], ar, "#f55d5d", "#f55d5d")
+                if hc or ac:
+                    _bars += _bar_row("⛳ Corners FT / game", r["home"], hc, r["away"], ac, "#5dd4f5", "#5dd4f5")
+                _bars += "</div>"
+                st.markdown(_bars, unsafe_allow_html=True)
 
         with st.expander("Model details"):
             st.json(r["breakdown"])
@@ -628,30 +712,55 @@ st.caption("Today's picks only — sorted by Expected Value")
 
 if ticket and ticket.get("ticket"):
     _crest_map = {r["match"]: (r.get("home_crest", ""), r.get("away_crest", "")) for r in today_results}
+    _avg_conf = round(ticket.get("avg_confidence", 0), 1)
+    _conf_col = _conf_color(_avg_conf)
 
+    _slip_rows = ""
     for t in ticket["ticket"]:
         h_crest, a_crest = _crest_map.get(t["match"], ("", ""))
-        h_img = _logo_img(h_crest, 20)
-        a_img = _logo_img(a_crest, 20)
+        h_img = _logo_img(h_crest, 18)
+        a_img = _logo_img(a_crest, 18)
         parts = t["match"].split(" vs ", 1)
         home_part = parts[0] if parts else t["match"]
         away_part = parts[1] if len(parts) > 1 else ""
-        kickoff_label = f"&nbsp;·&nbsp;{t['kickoff']}" if t.get("kickoff") else ""
-        st.markdown(
-            f'<div style="display:flex;align-items:center;gap:6px;padding:7px 0;'
-            f'border-bottom:1px solid rgba(128,128,128,0.15);">'
-            f'{h_img}&nbsp;<strong>{home_part}</strong>'
-            f'<span style="color:#888;font-size:11px;margin:0 2px;">vs</span>'
-            f'<strong>{away_part}</strong>&nbsp;{a_img}'
-            f'<span style="color:#aaa;font-size:11px;margin-left:auto;">'
-            f'{t["prediction"]}&nbsp;·&nbsp;EV&nbsp;{round(t.get("ev", 0), 3)}'
-            f'&nbsp;|&nbsp;Kelly&nbsp;{round(t.get("kelly", 0), 3)}{kickoff_label}</span>'
-            f'</div>',
-            unsafe_allow_html=True,
+        pred_bg, pred_fg = _PRED_STYLE.get(t["prediction"], ("#333", "#fff"))
+        ev_val = round(t.get("ev", 0), 3)
+        ev_col = "#4caf50" if ev_val > 0 else "#f44336"
+        ko = f'<span style="color:#555;font-size:10px;">🕐 {t["kickoff"]}</span>' if t.get("kickoff") else ""
+        _slip_rows += (
+            f'<div style="display:flex;align-items:center;gap:8px;padding:10px 0;'
+            f'border-bottom:1px solid rgba(255,255,255,0.06);">'
+            f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;">'
+            f'{h_img}<span style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{home_part}</span>'
+            f'<span style="color:#444;font-size:10px;flex-shrink:0;">vs</span>'
+            f'<span style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{away_part}</span>{a_img}'
+            f'</div>'
+            f'<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'
+            f'{ko}'
+            f'<span style="background:{pred_bg};color:{pred_fg};padding:2px 9px;border-radius:12px;font-size:11px;font-weight:700;">{t["prediction"]}</span>'
+            f'<span style="font-size:11px;font-weight:700;color:{ev_col};">EV {ev_val:+.3f}</span>'
+            f'</div></div>'
         )
-    st.success(f"Avg Confidence: {round(ticket.get('avg_confidence', 0), 2)}%")
+
+    st.markdown(
+        f'<div style="background:#0a1a0a;border:1px solid rgba(93,214,93,0.18);border-radius:12px;padding:16px 20px;margin:4px 0;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+        f'<span style="font-size:11px;color:#5dd65d;text-transform:uppercase;letter-spacing:1px;font-weight:600;">📋 Today\'s Ticket</span>'
+        f'<span style="font-size:11px;color:#555;">{len(ticket["ticket"])} picks</span>'
+        f'</div>'
+        f'{_slip_rows}'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08);">'
+        f'<span style="font-size:11px;color:#666;">Avg Confidence</span>'
+        f'<span style="font-size:16px;font-weight:700;color:{_conf_col};">{_avg_conf}%</span>'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
 else:
-    st.warning("No picks available for today")
+    st.markdown(
+        '<div style="background:#1a0a0a;border:1px solid rgba(255,255,255,0.08);border-radius:12px;'
+        'padding:16px 20px;text-align:center;color:#666;font-size:13px;">No picks available for today</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ── Ticket History ────────────────────────────────────────────────────────────
@@ -730,13 +839,11 @@ _tickets = get_all_tickets()
 if not _tickets:
     st.info("No tickets saved yet. Today's ticket saves automatically when picks are available.")
 else:
-    # Stats
     _won = sum(1 for t in _tickets if t["result"] == "won")
     _lost = sum(1 for t in _tickets if t["result"] == "lost")
     _decided = _won + _lost
     _win_rate = (_won / _decided * 100) if _decided > 0 else None
 
-    # Current streak (skip pending)
     _streak, _streak_type = 0, ""
     for _t in _tickets:
         if _t["result"] == "pending":
@@ -747,45 +854,72 @@ else:
             _streak += 1
         else:
             break
-    _streak_label = (
-        f"{'W' if _streak_type == 'won' else 'L'}{_streak}" if _streak_type else "—"
+    _streak_label = (f"{'W' if _streak_type == 'won' else 'L'}{_streak}" if _streak_type else "—")
+
+    # W/L chip strip (last 15 decided tickets)
+    _chip_style = {
+        "won":  "background:#1a3d1a;color:#5dd65d;",
+        "lost": "background:#3d1a1a;color:#f55d5d;",
+    }
+    _decided_tickets = [t for t in _tickets if t["result"] in ("won", "lost")]
+    _chips = "".join(
+        f'<span style="{_chip_style[t["result"]]}padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;">{"W" if t["result"]=="won" else "L"}</span>'
+        for t in _decided_tickets[:15]
     )
 
-    sc1, sc2, sc3, sc4, sc5 = st.columns(5)
-    sc1.metric("Total", len(_tickets))
-    sc2.metric("Won", _won)
-    sc3.metric("Lost", _lost)
-    sc4.metric("Win Rate", f"{_win_rate:.1f}%" if _win_rate is not None else "N/A")
-    sc5.metric("Streak", _streak_label)
-
-    st.divider()
+    # Summary bar
+    st.markdown(
+        f'<div style="background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;margin-bottom:12px;">'
+        f'<div style="display:flex;flex-wrap:wrap;gap:20px;align-items:center;margin-bottom:12px;">'
+        f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Total</div><div style="font-size:18px;font-weight:700;">{len(_tickets)}</div></div>'
+        f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Won</div><div style="font-size:18px;font-weight:700;color:#5dd65d;">{_won}</div></div>'
+        f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Lost</div><div style="font-size:18px;font-weight:700;color:#f55d5d;">{_lost}</div></div>'
+        f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Win Rate</div><div style="font-size:18px;font-weight:700;">{f"{_win_rate:.0f}%" if _win_rate is not None else "—"}</div></div>'
+        f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Streak</div><div style="font-size:18px;font-weight:700;color:{"#5dd65d" if _streak_type=="won" else "#f55d5d" if _streak_type else "#888"};">{_streak_label}</div></div>'
+        f'</div>'
+        + (f'<div style="display:flex;gap:4px;flex-wrap:wrap;">{_chips}</div>' if _chips else "")
+        + '</div>',
+        unsafe_allow_html=True,
+    )
 
     _RESULT_BADGE = {
-        "won":     '<span style="background:#1a7a3f;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">WON</span>',
-        "lost":    '<span style="background:#7a1a1a;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">LOST</span>',
-        "pending": '<span style="background:#5a4a00;color:#ffd080;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">PENDING</span>',
+        "won":     "background:#0d2d0d;color:#5dd65d;border:1px solid rgba(93,214,93,0.3);",
+        "lost":    "background:#2d0d0d;color:#f55d5d;border:1px solid rgba(245,93,93,0.3);",
+        "pending": "background:#2d2700;color:#f5d45d;border:1px solid rgba(245,212,93,0.3);",
     }
+    _RESULT_LABEL = {"won": "WON", "lost": "LOST", "pending": "PENDING"}
 
     for _t in _tickets:
         _date = _t["date"]
         _result = _t.get("result", "pending")
         _picks = _t.get("picks", [])
         _avg_conf = _t.get("avg_confidence", 0)
-        _badge = _RESULT_BADGE.get(_result, _RESULT_BADGE["pending"])
+        _badge_style = _RESULT_BADGE.get(_result, _RESULT_BADGE["pending"])
+        _badge_label = _RESULT_LABEL.get(_result, "PENDING")
+        _exp_label = f"{_date}  ·  {_badge_label}  ·  {len(_picks)} picks"
 
-        with st.expander(f"{_date}  |  {_result.upper()}  |  {len(_picks)} picks"):
+        with st.expander(_exp_label):
             st.markdown(
-                f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
-                f'<span style="font-weight:600;">{_date}</span>{_badge}'
-                f'<span style="color:#888;font-size:11px;">'
-                f'{len(_picks)} picks · Avg conf {round(_avg_conf, 1)}%</span>'
+                f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
+                f'<span style="font-weight:600;font-size:13px;">{_date}</span>'
+                f'<span style="{_badge_style}padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;">{_badge_label}</span>'
+                f'<span style="color:#555;font-size:11px;margin-left:auto;">{len(_picks)} picks · avg conf {round(_avg_conf, 1)}%</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
             for _p in _picks:
-                st.write(
-                    f"**{_p['match']}** — {_p['prediction']} "
-                    f"— EV: {round(_p.get('ev', 0), 3)} | Kelly: {round(_p.get('kelly', 0), 3)}"
+                _ppred = _p["prediction"]
+                _ppb, _ppf = _PRED_STYLE.get(_ppred, ("#333", "#fff"))
+                _pev = round(_p.get("ev", 0), 3)
+                _pev_col = "#4caf50" if _pev > 0 else "#f44336"
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
+                    f'<span style="font-size:12px;font-weight:600;flex:1;">{_p["match"]}</span>'
+                    f'<span style="background:{_ppb};color:{_ppf};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;">{_ppred}</span>'
+                    f'<span style="font-size:11px;color:{_pev_col};font-weight:600;">EV {_pev:+.3f}</span>'
+                    f'<span style="font-size:11px;color:#555;">Kelly {round(_p.get("kelly",0),3)}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
                 )
 
             if is_admin:
