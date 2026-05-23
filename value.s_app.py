@@ -11,13 +11,14 @@ from services.football_api import (
     BASE_URL,
     LEAGUE_CODES,
 )
-from models.v7.prediction_engine import generate_prediction
+from models.v7.prediction_engine import generate_prediction, apply_motivation_adjustment
 from models.v7.ticket_engine import build_ticket
 from models.v7.match_preview import generate_preview
 from services.player_images import get_player_image_url
 from services.api_football import get_fixture_injuries, get_team_season_stats, is_api_rate_limited
 from services.espn_api import get_espn_lineups, get_espn_last_lineup, get_espn_injuries
-from services.supabase_client import save_ticket, get_all_tickets, update_ticket_result
+from services.supabase_client import save_ticket, get_all_tickets, update_ticket_result, get_motivation, save_motivation
+from models.v7.motivation_engine import analyze_motivation
 from models.data_normalizer import normalize_league, register_team_stats
 from models.team_strength_model import get_team_strength
 
@@ -158,6 +159,13 @@ def cached_prediction(home: str, away: str, league: str, fixture_id):
     return generate_prediction(home, away, league, fixture_id)
 
 
+@st.cache_data(ttl=600)
+def _cached_motivation(fixture_id):
+    if not fixture_id:
+        return None
+    return get_motivation(int(fixture_id))
+
+
 # ── Engine loop ───────────────────────────────────────────────────────────────
 
 standings = get_standings_for_leagues(leagues)
@@ -205,6 +213,7 @@ for m in matches:
         "kickoff_date": match_dt.date(),
         "kickoff_date_str": match_dt.date().isoformat(),
         "competition_code": competition_code,
+        "league": league,
         "fixture_id": fixture_id,
         "prediction": prediction,
         "confidence": confidence,
@@ -451,13 +460,82 @@ def _render_pitch(home_name: str, home_xi: list, away_name: str, away_xi: list, 
     st.markdown(html, unsafe_allow_html=True)
 
 
+_MOTIVATION_BADGE = {
+    "HIGH":   ("#0d2d0d", "#5dd65d", "rgba(93,214,93,0.3)"),
+    "MEDIUM": ("#2d2700", "#f5d45d", "rgba(245,212,93,0.3)"),
+    "LOW":    ("#2d0d0d", "#f55d5d", "rgba(245,93,93,0.3)"),
+}
+
+
+def _motivation_badge(level: str) -> str:
+    bg, fg, border = _MOTIVATION_BADGE.get(level, _MOTIVATION_BADGE["MEDIUM"])
+    return (
+        f'<span style="background:{bg};color:{fg};padding:2px 10px;border-radius:12px;'
+        f'font-size:11px;font-weight:700;border:1px solid {border};">{level}</span>'
+    )
+
+
+def _render_motivation_section(r: dict, motivation: dict | None, base_conf: float, conf: float, adjustment: float) -> None:
+    fixture_id = r.get("fixture_id")
+    if motivation:
+        home_lvl = motivation.get("home_motivation", "MEDIUM")
+        away_lvl = motivation.get("away_motivation", "MEDIUM")
+        home_factors = motivation.get("home_factors") or []
+        away_factors = motivation.get("away_factors") or []
+        summary = motivation.get("summary", "")
+        home_list = "".join(f'<li style="font-size:11px;color:#aaa;">{f}</li>' for f in home_factors[:3])
+        away_list = "".join(f'<li style="font-size:11px;color:#aaa;">{f}</li>' for f in away_factors[:3])
+        if adjustment > 0:
+            adj_str = f'<span style="color:#5dd65d;font-weight:700;">+{adjustment:.1f}</span>'
+        elif adjustment < 0:
+            adj_str = f'<span style="color:#f55d5d;font-weight:700;">{adjustment:.1f}</span>'
+        else:
+            adj_str = '<span style="color:#888;font-weight:700;">0</span>'
+        st.markdown(
+            '<div style="padding:8px 12px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid rgba(255,255,255,0.06);">'
+            '<div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">🧠 Motivation</div>'
+            '<div style="display:flex;gap:16px;margin-bottom:8px;">'
+            f'<div style="flex:1;"><div style="font-size:12px;font-weight:600;margin-bottom:4px;">{r["home"]} &nbsp;{_motivation_badge(home_lvl)}</div>'
+            f'<ul style="margin:4px 0 0 16px;padding:0;">{home_list}</ul></div>'
+            f'<div style="flex:1;"><div style="font-size:12px;font-weight:600;margin-bottom:4px;">{r["away"]} &nbsp;{_motivation_badge(away_lvl)}</div>'
+            f'<ul style="margin:4px 0 0 16px;padding:0;">{away_list}</ul></div>'
+            '</div>'
+            f'<div style="font-size:11px;color:#ccc;font-style:italic;margin-bottom:6px;">{summary}</div>'
+            f'<div style="font-size:11px;color:#888;">Confidence: {base_conf}% → <strong>{conf}%</strong> · motivation {adj_str}</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    if not fixture_id:
+        return
+
+    if st.button("🧠 Analyze motivation", key=f"mot_btn_{fixture_id}"):
+        league = r.get("league", "")
+        league_standings = standings.get(league, []) if league else []
+        analysis = analyze_motivation(r["home"], r["away"], league, league_standings)
+        if save_motivation(int(fixture_id), r["home"], r["away"], analysis):
+            _cached_motivation.clear()
+        else:
+            st.session_state[f"_mot_{fixture_id}"] = analysis
+        st.rerun()
+
+
 def render_match_card(r: dict) -> None:
     is_fallback = r["breakdown"].get("is_fallback")
-    conf = round(r["confidence"], 1)
+    base_conf = round(r["confidence"], 1)
+    pred = r["prediction"]
+    fixture_id = r.get("fixture_id")
+    motivation = (
+        st.session_state.get(f"_mot_{fixture_id}") if fixture_id else None
+    ) or _cached_motivation(fixture_id)
+    if motivation:
+        conf, mot_adjustment = apply_motivation_adjustment(base_conf, motivation, pred)
+    else:
+        conf, mot_adjustment = base_conf, 0.0
     ev = round(r["edge"].get("ev", 0), 3)
     kelly = round(r["edge"].get("kelly", 0), 3)
     is_value = r["edge"].get("value_bet")
-    pred = r["prediction"]
     home_crest = r.get("home_crest", "")
     away_crest = r.get("away_crest", "")
 
@@ -522,6 +600,10 @@ def render_match_card(r: dict) -> None:
         # Preview
         preview = generate_preview(r["home"], r["away"], pred, r["breakdown"], r["confidence"])
         st.markdown(f"_{preview}_")
+        st.divider()
+
+        # Motivation panel / button
+        _render_motivation_section(r, motivation, base_conf, conf, mot_adjustment)
         st.divider()
 
         # Top scorers

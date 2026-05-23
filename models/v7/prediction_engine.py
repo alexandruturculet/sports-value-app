@@ -28,6 +28,39 @@ CONF_MAX = 92
 EV_XG_WEIGHT = 0.25
 EV_BASELINE = 0.55          # juice/vigorish assumption
 
+# ── Motivation adjustment ────────────────────────────────────────────────────
+MOTIVATION_SCORE = {"HIGH": 2, "MEDIUM": 1, "LOW": 0}
+MOTIVATION_MAX_ADJUST = 5.0
+
+
+def apply_motivation_adjustment(confidence: float, motivation: dict, market: str) -> tuple[float, float]:
+    """Return (adjusted_confidence, adjustment). Adjustment ∈ [-5, +5], confidence clamped to [CONF_MIN, CONF_MAX]."""
+    home = MOTIVATION_SCORE.get(motivation.get("home_motivation", "MEDIUM"), 1)
+    away = MOTIVATION_SCORE.get(motivation.get("away_motivation", "MEDIUM"), 1)
+
+    if market in ("1", "1X"):
+        adjustment = 2.5 * (home - away)
+    elif market in ("2", "X2"):
+        adjustment = 2.5 * (away - home)
+    elif market == "X":
+        if home == away:
+            adjustment = 5.0  # both equally engaged or both equally checked-out → draw more likely
+        else:
+            adjustment = -5.0  # mismatched intent breaks the draw
+    elif market in ("BTTS", "Over 2.5"):
+        if home >= 2 and away >= 2:
+            adjustment = 5.0
+        elif home == 0 or away == 0:
+            adjustment = -3.0
+        else:
+            adjustment = 0.0
+    else:
+        adjustment = 0.0
+
+    adjustment = max(-MOTIVATION_MAX_ADJUST, min(MOTIVATION_MAX_ADJUST, adjustment))
+    adjusted = max(CONF_MIN, min(CONF_MAX, confidence + adjustment))
+    return round(adjusted, 2), round(adjustment, 2)
+
 
 def select_market(xg_home: float, xg_away: float, poisson: dict, elo_diff: float, context=None) -> str:
     diff = xg_home - xg_away

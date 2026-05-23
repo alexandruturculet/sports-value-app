@@ -81,6 +81,52 @@ def update_ticket_result(ticket_id: str, result: str) -> bool:
         return False
 
 
+def get_motivation(fixture_id: int) -> dict | None:
+    """Fetch cached motivation analysis for a fixture, or None if absent."""
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        resp = (
+            client.table("match_motivation")
+            .select("*")
+            .eq("fixture_id", fixture_id)
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        return rows[0] if rows else None
+    except Exception as e:
+        logger.error("Failed to fetch motivation for fixture %s: %s", fixture_id, e)
+        return None
+
+
+def save_motivation(fixture_id: int, home: str, away: str, analysis: dict) -> bool:
+    """Upsert motivation analysis for a fixture."""
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.table("match_motivation").upsert(
+            {
+                "fixture_id": fixture_id,
+                "home_team": home,
+                "away_team": away,
+                "home_motivation": analysis["home_motivation"],
+                "away_motivation": analysis["away_motivation"],
+                "home_factors": analysis.get("home_factors", []),
+                "away_factors": analysis.get("away_factors", []),
+                "summary": analysis.get("summary", ""),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="fixture_id",
+        ).execute()
+        return True
+    except Exception as e:
+        logger.error("Failed to save motivation for fixture %s: %s", fixture_id, e)
+        return False
+
+
 def reset_evaluated_tickets_to_pending() -> int:
     """Reset all won/lost tickets back to pending so they can be re-evaluated.
     Returns the number of tickets reset."""
