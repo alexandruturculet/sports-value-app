@@ -41,6 +41,13 @@ def _pts_at_position(standings: list, target_pos: int) -> int | None:
     return None
 
 
+def _row_at_position(standings: list, target_pos: int) -> dict | None:
+    for row in standings:
+        if isinstance(row, dict) and row.get("position") == target_pos:
+            return row
+    return None
+
+
 def _season_progress(played: int, total: int) -> float:
     if not played or total < 2:
         return 0.5
@@ -65,11 +72,14 @@ def _assess_team(name: str, standings: list, total: int, rel_start: int, eur_end
     max_pts = pts + games_left * 3
 
     # Reference points — used for mathematical checks
-    safety_pts    = _pts_at_position(standings, rel_start - 1)  # last safe team
-    rel_top_pts   = _pts_at_position(standings, rel_start)       # best relegated team
-    leader_pts    = _pts_at_position(standings, 1)
+    safety_pts     = _pts_at_position(standings, rel_start - 1)  # last safe team
+    _rel_row       = _row_at_position(standings, rel_start)       # top relegated team row
+    rel_top_pts    = (_rel_row.get("points") or 0) if _rel_row else None
+    _rel_played    = (_rel_row.get("played") or played) if _rel_row else played
+    _rel_games_left = max(0, full_season - _rel_played)
+    leader_pts     = _pts_at_position(standings, 1)
     eur_cutoff_pts = _pts_at_position(standings, eur_end)        # last European spot
-    eur_next_pts  = _pts_at_position(standings, eur_end + 1)     # first team outside Europe
+    eur_next_pts   = _pts_at_position(standings, eur_end + 1)    # first team outside Europe
 
     level = 1  # MEDIUM by default
     factors = []
@@ -84,16 +94,16 @@ def _assess_team(name: str, standings: list, total: int, rel_start: int, eur_end
         factors.append(f"Relegation battle (P{pos})")
         level = max(level, 2)
     elif rel_top_pts is not None:
-        rel_zone_max = rel_top_pts + games_left * 3
+        # Use relegation team's own games left, not assessed team's
+        rel_zone_max = rel_top_pts + _rel_games_left * 3
         if rel_zone_max >= pts:
-            # Best relegated team can mathematically catch this team
             pts_gap = pts - rel_top_pts
             if pts_gap <= 3:
                 factors.append(f"Relegation danger (P{pos}, {pts_gap}pt gap)")
                 level = max(level, 2 if stage >= 0.4 else 1)
-            else:
+            elif pos >= rel_start - 4:
+                # Only flag teams close enough to the zone to be realistically threatened
                 factors.append(f"Watching relegation zone (P{pos})")
-                level = max(level, 1)
     elif pos >= rel_start - 2:
         # Fallback when points data missing
         factors.append(f"Near relegation (P{pos})")
@@ -125,7 +135,7 @@ def _assess_team(name: str, standings: list, total: int, rel_start: int, eur_end
         level = max(level, 2 if stage >= 0.6 else 1)
 
     # ── Dead rubber: safe from rel AND mathematically can't reach Europe ─────────
-    rel_safe = rel_top_pts is not None and (rel_top_pts + games_left * 3) < pts
+    rel_safe = rel_top_pts is not None and (rel_top_pts + _rel_games_left * 3) < pts
     cant_europe = eur_cutoff_pts is not None and max_pts < eur_cutoff_pts
     if rel_safe and cant_europe and level <= 1:
         factors.append("Nothing to play for")
