@@ -123,60 +123,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# ── League state (set before data fetch, updated by widget inside sports tab) ──
 
 _DEFAULT_LEAGUES = ["Premier League", "La Liga", "Serie A"]
 
-with st.sidebar:
-    _section = st.radio(
-        "Navigate",
-        ["⚽ Sports Betting", "₿ Crypto", "📈 Markets"],
-        label_visibility="collapsed",
-        key="nav_section",
-    )
-
-    if _section == "⚽ Sports Betting":
-        st.divider()
-        st.markdown("### ⚽ Leagues")
-        leagues = st.multiselect(
-            "Select leagues",
-            ALL_LEAGUES,
-            default=_DEFAULT_LEAGUES,
-            label_visibility="collapsed",
-        )
-
-        st.divider()
-
-        now = datetime.now(timezone.utc).timestamp()
-        last_refresh = st.session_state.get("last_refresh", 0)
-        seconds_since = now - last_refresh
-        can_refresh = seconds_since >= REFRESH_COOLDOWN_SECONDS
-
-        if st.button("🔄 Refresh predictions", disabled=not can_refresh, use_container_width=True):
-            st.cache_data.clear()
-            st.session_state["last_refresh"] = now
-            st.rerun()
-
-        if not can_refresh:
-            wait = int(REFRESH_COOLDOWN_SECONDS - seconds_since)
-            st.markdown(
-                f'<div style="text-align:center;font-size:11px;color:#555;margin-top:4px;">Next refresh in {wait}s</div>',
-                unsafe_allow_html=True,
-            )
-        elif last_refresh:
-            _last_str = datetime.fromtimestamp(last_refresh, tz=DISPLAY_TZ).strftime("%H:%M")
-            st.markdown(
-                f'<div style="text-align:center;font-size:11px;color:#555;margin-top:4px;">Last refreshed {_last_str}</div>',
-                unsafe_allow_html=True,
-            )
-
-        st.divider()
-        _admin_pw = os.getenv("ADMIN_PASSWORD", "")
-        _entered_pw = st.text_input("Admin", type="password", placeholder="Admin password", label_visibility="collapsed")
-        is_admin = bool(_admin_pw and _entered_pw == _admin_pw)
-    else:
-        leagues = _DEFAULT_LEAGUES
-        is_admin = False
+leagues = st.session_state.get("leagues_sel", _DEFAULT_LEAGUES)
 
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
@@ -687,6 +638,39 @@ def render_match_card(r: dict) -> None:
 
 
 def _sports_display() -> None:
+    # ── Filters ───────────────────────────────────────────────────────────────────
+
+    _fcol1, _fcol2 = st.columns([5, 1])
+    with _fcol1:
+        st.multiselect(
+            "Leagues",
+            ALL_LEAGUES,
+            default=_DEFAULT_LEAGUES,
+            key="leagues_sel",
+            label_visibility="collapsed",
+        )
+    with _fcol2:
+        _now = datetime.now(timezone.utc).timestamp()
+        _last_refresh = st.session_state.get("last_refresh", 0)
+        _seconds_since = _now - _last_refresh
+        _can_refresh = _seconds_since >= REFRESH_COOLDOWN_SECONDS
+        if st.button("🔄 Refresh", disabled=not _can_refresh, use_container_width=True):
+            st.cache_data.clear()
+            st.session_state["last_refresh"] = _now
+            st.rerun()
+        if not _can_refresh:
+            _wait = int(REFRESH_COOLDOWN_SECONDS - _seconds_since)
+            st.markdown(
+                f'<div style="text-align:center;font-size:11px;color:#555;margin-top:4px;">Next refresh in {_wait}s</div>',
+                unsafe_allow_html=True,
+            )
+        elif _last_refresh:
+            _last_str = datetime.fromtimestamp(_last_refresh, tz=DISPLAY_TZ).strftime("%H:%M")
+            st.markdown(
+                f'<div style="text-align:center;font-size:11px;color:#555;margin-top:4px;">Last refreshed {_last_str}</div>',
+                unsafe_allow_html=True,
+            )
+
     # ── Today's matches ───────────────────────────────────────────────────────────
 
     st.header(f"Today's Picks — {today_local.strftime('%d %B %Y')}")
@@ -938,22 +922,16 @@ def _sports_display() -> None:
                         unsafe_allow_html=True,
                     )
 
-                if is_admin:
-                    _ov_col1, _ov_col2, _ov_col3 = st.columns([1, 1, 3])
-                    if _ov_col1.button("✅ Won", key=f"won_{_t['id']}"):
-                        update_ticket_result(_t["id"], "won")
-                        st.rerun()
-                    if _ov_col2.button("❌ Lost", key=f"lost_{_t['id']}"):
-                        update_ticket_result(_t["id"], "lost")
-                        st.rerun()
 
 
 
-if _section == "⚽ Sports Betting":
+_tab_sports, _tab_crypto, _tab_markets = st.tabs(["⚽ Sports Betting", "₿ Crypto", "📈 Markets"])
+
+with _tab_sports:
     _sports_display()
-elif _section == "₿ Crypto":
+with _tab_crypto:
     from sections.crypto import render as _rc
     _rc()
-else:
+with _tab_markets:
     from sections.markets import render as _rm
     _rm()
