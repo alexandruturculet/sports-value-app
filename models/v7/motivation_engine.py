@@ -86,22 +86,32 @@ def _assess_team(name: str, standings: list, total: int, rel_start: int, eur_end
         level = max(level, 2 if stage >= 0.7 else 1)
 
     # --- Title race ---
+    leader_pts = _pts_at_position(standings, 1)
     if pos == 1:
         factors.append("Title leaders")
         level = max(level, 2)
     elif pos <= 3 and stage >= 0.4:
-        factors.append(f"Title contender (P{pos})")
-        level = max(level, 2)
+        # Only a real title race if the team can still mathematically reach P1
+        if leader_pts is None or max_pts >= leader_pts:
+            factors.append(f"Title contender (P{pos})")
+            level = max(level, 2)
 
     # --- Champions League spot ---
     if pos == 4 and stage >= 0.5:
-        factors.append("Champions League race (P4)")
-        level = max(level, 2 if stage >= 0.65 else 1)
+        # Only relevant if P3 can still be caught (or team can still be displaced from P4)
+        p3_pts = _pts_at_position(standings, 3)
+        p5_pts = _pts_at_position(standings, 5)
+        cl_contested = (p3_pts is None or max_pts >= p3_pts) or (p5_pts is not None and p5_pts + games_left * 3 >= pts)
+        if cl_contested:
+            factors.append("Champions League race (P4)")
+            level = max(level, 2 if stage >= 0.65 else 1)
 
     # --- Europa / Conference League ---
     if 4 < pos <= eur_end:
-        factors.append(f"European race (P{pos})")
-        level = max(level, 1)
+        # Only relevant if team can still mathematically reach the cutoff or be displaced
+        if eur_cutoff_pts is None or max_pts >= eur_cutoff_pts:
+            factors.append(f"European race (P{pos})")
+            level = max(level, 1)
 
     # --- Dead rubber: mathematically can't reach Europe AND safe from relegation ---
     safe_from_rel = pos < rel_start - 3
