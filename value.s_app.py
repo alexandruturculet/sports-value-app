@@ -15,7 +15,7 @@ from models.v7.prediction_engine import generate_prediction
 from models.v7.ticket_engine import build_ticket
 from models.v7.match_preview import generate_preview
 from services.player_images import get_player_image_url
-from services.api_football import get_fixture_injuries
+from services.api_football import get_fixture_injuries, get_team_season_stats
 from services.espn_api import get_espn_lineups, get_espn_last_lineup, get_espn_injuries
 from services.supabase_client import save_ticket, get_all_tickets, update_ticket_result
 from models.data_normalizer import normalize_league, register_team_stats
@@ -548,6 +548,31 @@ def render_match_card(r: dict) -> None:
                         st.write(f"❌ {inj['name']}" + (f" — *{reason}*" if reason else ""))
         else:
             st.caption("No injury data found. Reports are typically available 24–48 h before kickoff via API-Football; ESPN does not publish structured soccer injury lists.")
+
+        # ── Season stats (on demand) ──────────────────────────────
+        st.divider()
+        _stats_key = f"_teamstats_{r.get('fixture_id', r['match'])}"
+        _btn_key = f"load_stats_{r.get('fixture_id', r['match'])}"
+        if _stats_key not in st.session_state:
+            if st.button("📊 Load season stats", key=_btn_key):
+                _code = r.get("competition_code", "PL")
+                st.session_state[_stats_key] = {
+                    "home": get_team_season_stats(r["home"], _code),
+                    "away": get_team_season_stats(r["away"], _code),
+                }
+        if _stats_key in st.session_state:
+            _sd = st.session_state[_stats_key]
+            _hs, _as = _sd["home"], _sd["away"]
+            st.markdown("**Season Stats**")
+            _sc1, _sc2 = st.columns(2)
+            for _col, _tname, _ts in [(_sc1, r["home"], _hs), (_sc2, r["away"], _as)]:
+                with _col:
+                    _played = _ts.get("played", "")
+                    _label = f"**{_tname}**" + (f" *({_played} games)*" if _played else "")
+                    st.markdown(_label)
+                    st.write(f"🟨 Yellow: {_ts.get('avg_yellow', '—')}/game")
+                    st.write(f"🟥 Red: {_ts.get('avg_red', '—')}/game")
+                    st.write(f"⛳ Corners FT: {_ts.get('avg_corners_ft', '—')}/game")
 
         with st.expander("Model details"):
             st.json(r["breakdown"])

@@ -205,3 +205,66 @@ def get_lineups(team_name: str, fixture_id) -> dict:
 
 def get_injuries(team_name: str) -> list:
     return []
+
+
+# ── Season stats (cards + corners) ───────────────────────────────────────────
+
+@st.cache_data(ttl=604800)
+def _get_team_id(team_name: str, competition_code: str) -> int | None:
+    league_id = _LEAGUE_IDS.get(competition_code)
+    if not league_id:
+        return None
+    season = _current_season()
+    data = _get(f"{BASE_URL}/teams?name={team_name}&league={league_id}&season={season}")
+    teams = data.get("response", [])
+    if teams:
+        return teams[0]["team"]["id"]
+    data = _get(f"{BASE_URL}/teams?search={team_name[:5]}&league={league_id}&season={season}")
+    for t in data.get("response", []):
+        if _names_match(team_name, t["team"]["name"]):
+            return t["team"]["id"]
+    return None
+
+
+@st.cache_data(ttl=86400)
+def get_team_season_stats(team_name: str, competition_code: str) -> dict:
+    """Season avg yellow/red cards + avg corners FT (last 10 matches). Returns {} on failure."""
+    team_id = _get_team_id(team_name, competition_code)
+    if not team_id:
+        return {}
+    league_id = _LEAGUE_IDS.get(competition_code)
+    season = _current_season()
+
+    result = {}
+
+    # Cards — season totals from teams/statistics
+    sdata = _get(f"{BASE_URL}/teams/statistics?team={team_id}&league={league_id}&season={season}")
+    resp = sdata.get("response", {})
+    if resp:
+        played = resp.get("fixtures", {}).get("played", {}).get("total", 1) or 1
+        cards = resp.get("cards", {})
+        yellow = sum((v.get("total") or 0) for v in cards.get("yellow", {}).values())
+        red = sum((v.get("total") or 0) for v in cards.get("red", {}).values())
+        result["avg_yellow"] = round(yellow / played, 2)
+        result["avg_red"] = round(red / played, 2)
+        result["played"] = played
+
+    # Corners — avg from last 10 finished fixtures
+    fdata = _get(f"{BASE_URL}/fixtures?team={team_id}&last=10&season={season}&league={league_id}&status=FT")
+    corners = []
+    for f in fdata.get("response", []):
+        fid = f["fixture"]["id"]
+        fsdata = _get(f"{BASE_URL}/fixtures/statistics?fixture={fid}&team={team_id}")
+        for block in fsdata.get("response", []):
+            if block.get("team", {}).get("id") != team_id:
+                continue
+            for stat in block.get("statistics", []):
+                if stat.get("type") == "Corner Kicks":
+                    try:
+                        corners.append(int(stat["value"]))
+                    except (TypeError, ValueError):
+                        pass
+    if corners:
+        result["avg_corners_ft"] = round(sum(corners) / len(corners), 1)
+
+    return result
