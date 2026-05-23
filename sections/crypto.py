@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import streamlit.components.v1 as components
 from services.coingecko import get_market_overview, get_top_coins, get_fear_greed
@@ -108,29 +109,49 @@ def _sparkline_svg(prices: list, width: int = 80, height: int = 28) -> str:
     )
 
 
-def _render_tradingview(coin_id: str) -> None:
-    symbol = _TV_SYMBOLS.get(coin_id, "")
-    if not symbol:
-        st.caption("No TradingView symbol mapped for this coin.")
-        return
-    safe_id = coin_id.replace("-", "_")
-    widget_html = (
-        f'<div style="height:430px;">'
-        f'<div id="tv_{safe_id}" style="height:100%;"></div>'
-        f'<script src="https://s3.tradingview.com/tv.js"></script>'
-        f'<script>'
-        f'new TradingView.widget({{'
-        f'  width:"100%",height:430,'
-        f'  symbol:"{symbol}",'
-        f'  interval:"D",timezone:"Europe/Bucharest",'
-        f'  theme:"dark",style:"1",locale:"en",'
-        f'  allow_symbol_change:true,hide_top_toolbar:false,'
-        f'  container_id:"tv_{safe_id}"'
-        f'}});'
-        f'</script>'
-        f'</div>'
-    )
-    components.html(widget_html, height=440, scrolling=False)
+def _render_portfolio_rows(rows: list, total_value: float) -> None:
+    tv_safe = {cid.replace("-", "_"): sym for cid, sym in _TV_SYMBOLS.items()}
+    cards_html = ""
+    for coin_id, cd, _ in rows:
+        sparkline_prices = (cd.get("sparkline_in_7d") or {}).get("price") or [] if cd else []
+        cards_html += _portfolio_row(coin_id, cd, total_value, sparkline_prices)
+        if coin_id in _TV_SYMBOLS:
+            safe_id = coin_id.replace("-", "_")
+            cards_html += (
+                f'<div id="chart_{safe_id}" style="display:none;margin-bottom:6px;">'
+                f'<div id="tv_{safe_id}" style="height:440px;"></div>'
+                f'</div>'
+            )
+    tv_json = json.dumps(tv_safe)
+    html = f"""<!DOCTYPE html><html><head>
+<style>
+  body{{background:#0d1117;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e0e0e0;}}
+  [data-chart-id]{{cursor:pointer;}}
+  [data-chart-id]:hover svg polyline{{opacity:0.75;}}
+</style></head><body>
+{cards_html}
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+var TV={tv_json},loaded={{}},active=null;
+document.addEventListener('click',function(e){{
+  var el=e.target.closest('[data-chart-id]');
+  if(!el)return;
+  toggleChart(el.dataset.chartId);
+}});
+function toggleChart(id){{
+  var c=document.getElementById('chart_'+id);
+  if(!c)return;
+  if(active&&active!==id){{var p=document.getElementById('chart_'+active);if(p)p.style.display='none';}}
+  if(c.style.display==='none'){{
+    c.style.display='block';active=id;
+    if(!loaded[id]&&TV[id]){{
+      new TradingView.widget({{width:'100%',height:440,symbol:TV[id],interval:'D',timezone:'Europe/Bucharest',theme:'dark',style:'1',locale:'en',allow_symbol_change:true,container_id:'tv_'+id}});
+      loaded[id]=true;
+    }}
+  }}else{{c.style.display='none';active=null;}}
+}}
+</script></body></html>"""
+    components.html(html, height=len(rows) * 72 + 460, scrolling=False)
 
 
 def _pct(pct: float | None, small: bool = False) -> str:
@@ -238,6 +259,7 @@ def _portfolio_row(coin_id: str, coin_data: dict | None, total_value: float, spa
     ) if price else ""
 
     spark = _sparkline_svg(sparkline_prices or [])
+    safe_id = coin_id.replace("-", "_")
 
     return (
         f'<div style="background:#0a0a0a;border:1px solid #1c1c1c;border-left:3px solid {border_col};'
@@ -251,7 +273,7 @@ def _portfolio_row(coin_id: str, coin_data: dict | None, total_value: float, spa
         f'<div style="color:#4a4a4a;font-size:10px;margin-top:2px;">{qty_str} tokens</div>'
         f'</div>'
         f'</div>'
-        f'{spark}'
+        f'<div data-chart-id="{safe_id}" title="Click to open TradingView chart" style="flex-shrink:0;">{spark}</div>'
         f'<div style="text-align:center;flex-shrink:0;min-width:76px;">'
         f'<div style="font-size:11px;color:#666;margin-bottom:2px;">{price_str}</div>'
         f'{_pct(p24, True)}'
@@ -395,15 +417,7 @@ def render():
             unsafe_allow_html=True,
         )
 
-        for coin_id, cd, _ in rows:
-            sparkline_prices = []
-            if cd:
-                sparkline_prices = (cd.get("sparkline_in_7d") or {}).get("price") or []
-            st.markdown(_portfolio_row(coin_id, cd, total_value, sparkline_prices), unsafe_allow_html=True)
-            if coin_id in _TV_SYMBOLS:
-                sym = _PORTFOLIO[coin_id]["symbol"]
-                with st.expander(f"📈 {sym} — TradingView chart"):
-                    _render_tradingview(coin_id)
+        _render_portfolio_rows(rows, total_value)
     else:
         st.info("Portfolio data unavailable — CoinGecko may be rate-limited. Try again in a moment.")
 
