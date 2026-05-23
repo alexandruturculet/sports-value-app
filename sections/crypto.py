@@ -463,6 +463,21 @@ def render():
             unsafe_allow_html=True,
         )
 
+        _SORT_KEY = {
+            "Allocation":  lambda r: r[2],
+            "24h change":  lambda r: (r[1].get("price_change_percentage_24h_in_currency") or 0) if r[1] else 0,
+            "7d change":   lambda r: (r[1].get("price_change_percentage_7d_in_currency") or 0) if r[1] else 0,
+            "Market cap":  lambda r: (r[1].get("market_cap") or 0) if r[1] else 0,
+        }
+        sort_by = st.radio(
+            "Sort by",
+            list(_SORT_KEY.keys()),
+            horizontal=True,
+            label_visibility="collapsed",
+            key="portfolio_sort",
+        )
+        rows.sort(key=_SORT_KEY[sort_by], reverse=True)
+
         _render_allocation_pie(rows, total_value)
         _render_portfolio_rows(rows, total_value)
     else:
