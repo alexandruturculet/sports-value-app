@@ -7,7 +7,7 @@ from services.cryptopanic import get_news
 # ── Personal watchlist (CoinGecko IDs) ───────────────────────────────────────
 _WATCHLIST_IDS = (
     "ethereum", "arbitrum", "vechain",
-    "bittensor", "celestia", "render-token", "fetch-ai", "io-net", "akash-network",
+    "bittensor", "celestia", "render-token", "fetch-ai", "io", "akash-network",
     "pendle", "aerodrome-finance", "pyth-network",
     "virtual-protocol", "peaq-2", "grass",
     "livepeer", "arkham", "aethir", "solidus-ai-tech", "rss3",
@@ -27,7 +27,7 @@ _PORTFOLIO = {
     "celestia":         {"qty": 212.87,  "symbol": "TIA",   "staked": True},
     "spectral":         {"qty": 558,     "symbol": "SPEC"},
     "pyth-network":     {"qty": 1005,    "symbol": "PYTH"},
-    "io-net":           {"qty": 278,     "symbol": "IO"},
+    "io":               {"qty": 278,     "symbol": "IO"},
     "heroes-of-mavia":  {"qty": 1084,    "symbol": "MAVIA"},
     "echelon-prime":    {"qty": 49.31,   "symbol": "PRIME"},
     "verasity":         {"qty": 736300,  "symbol": "VRA"},
@@ -54,7 +54,7 @@ _TV_SYMBOLS = {
     "celestia":         "BINANCE:TIAUSDT",
     "spectral":         "MEXC:SPECUSDT",
     "pyth-network":     "BINANCE:PYTHUSDT",
-    "io-net":           "BYBIT:IOUSDT",
+    "io":               "BYBIT:IOUSDT",
     "heroes-of-mavia":  "BINANCE:MAVIAUSDT",
     "echelon-prime":    "COINBASE:PRIMEUSDT",
     "verasity":         "KUCOIN:VRAUSDT",
