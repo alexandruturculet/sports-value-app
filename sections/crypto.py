@@ -154,6 +154,52 @@ function toggleChart(id){{
     components.html(html, height=len(rows) * 72 + 460, scrolling=False)
 
 
+_PIE_COLORS = [
+    "#4caf50", "#2196f3", "#ff9800", "#e91e63", "#9c27b0",
+    "#00bcd4", "#8bc34a", "#ff5722", "#607d8b", "#795548",
+    "#f44336", "#3f51b5",
+]
+
+
+def _render_allocation_pie(rows: list, total_value: float) -> None:
+    import plotly.graph_objects as go
+
+    labels, values, colors = [], [], []
+    for i, (coin_id, cd, value) in enumerate(rows):
+        if value > 0:
+            labels.append(_PORTFOLIO[coin_id]["symbol"])
+            values.append(round(value, 2))
+            colors.append(_PIE_COLORS[i % len(_PIE_COLORS)])
+
+    if not values:
+        return
+
+    fig = go.Figure(go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.55,
+        marker=dict(colors=colors, line=dict(color="#0d1117", width=2)),
+        textinfo="label+percent",
+        textfont=dict(size=11),
+        hovertemplate="%{label}<br>$%{value:,.2f}<br>%{percent}<extra></extra>",
+        sort=False,
+    ))
+    fig.add_annotation(
+        text=f"<b>${total_value:,.0f}</b>",
+        x=0.5, y=0.5, showarrow=False,
+        font=dict(size=15, color="#e0e0e0"),
+    )
+    fig.update_layout(
+        paper_bgcolor="#0d1117",
+        plot_bgcolor="#0d1117",
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=300,
+        showlegend=False,
+        font=dict(color="#e0e0e0", family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
 def _pct(pct: float | None, small: bool = False) -> str:
     if pct is None:
         return '<span style="color:#555">—</span>'
@@ -417,6 +463,7 @@ def render():
             unsafe_allow_html=True,
         )
 
+        _render_allocation_pie(rows, total_value)
         _render_portfolio_rows(rows, total_value)
     else:
         st.info("Portfolio data unavailable — CoinGecko may be rate-limited. Try again in a moment.")
