@@ -43,13 +43,14 @@ def get_market_overview(coin_ids: tuple) -> list:
 
 
 @st.cache_data(ttl=300)
-def get_top_coins(limit: int = 50) -> list:
-    """Top N coins by market cap with 24h and 7d change."""
+def get_top_coins(limit: int = 200) -> list:
+    """Top N coins by market cap with 24h and 7d change (max 250 per CoinGecko free tier)."""
+    per_page = min(limit, 250)
     data = _get(f"{_CG_BASE}/coins/markets", params={
         "vs_currency": "usd",
         "price_change_percentage": "24h,7d",
         "order": "market_cap_desc",
-        "per_page": limit,
+        "per_page": per_page,
         "page": 1,
     })
     return data if isinstance(data, list) else []
