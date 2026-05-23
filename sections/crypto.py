@@ -10,7 +10,7 @@ _WATCHLIST_IDS = (
     "ethereum", "arbitrum", "vechain",
     "bittensor", "celestia", "render-token", "fetch-ai", "io-net", "akash-network",
     "pendle", "aerodrome-finance", "pyth-network",
-    "virtual-protocol", "peaq", "grass",
+    "virtual-protocol", "peaq-2", "grass",
     "livepeer", "arkham", "aethir", "solidus-ai-tech", "rss3",
     "sonic-3", "moonbeam", "mina-protocol", "hashflow", "beam-2",
     "chex-token", "flux", "phala-network", "aioz-network",
@@ -77,25 +77,53 @@ def _price_fmt(price: float) -> str:
     return f"${price:,.0f}"
 
 
+def _mcap_fmt(mcap: float | None) -> str:
+    if not mcap:
+        return "—"
+    if mcap >= 1_000_000_000:
+        return f"${mcap / 1_000_000_000:.2f}B"
+    if mcap >= 1_000_000:
+        return f"${mcap / 1_000_000:.1f}M"
+    return f"${mcap:,.0f}"
+
+
+def _locked_pct(coin: dict) -> str:
+    circ = coin.get("circulating_supply")
+    total = coin.get("total_supply")
+    if not circ or not total or total <= 0:
+        return "—"
+    locked = (total - circ) / total * 100
+    if locked < 0.5:
+        return "~0%"
+    color = "#f44336" if locked > 50 else "#ff9800" if locked > 25 else "#9e9e9e"
+    return f'<span style="color:{color}">{locked:.1f}%</span>'
+
+
 def _watchlist_card(coin: dict) -> str:
     symbol = (coin.get("symbol") or "").upper()
     price = coin.get("current_price", 0)
     p24 = coin.get("price_change_percentage_24h_in_currency")
     p7d = coin.get("price_change_percentage_7d_in_currency")
+    mcap = coin.get("market_cap")
     img = coin.get("image", "")
     sig = _compute_signal(coin)
     _, col_sig, icon_sig = _SIG_STYLE[sig]
     img_tag = f'<img src="{img}" style="width:18px;height:18px;border-radius:50%;margin-right:5px;vertical-align:middle">' if img else ""
+    locked = _locked_pct(coin)
     return (
         f'<div style="background:#111;border:1px solid #1e1e1e;border-radius:8px;padding:9px 11px;margin-bottom:5px;">'
         f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
         f'<div>{img_tag}<span style="font-weight:700;font-size:13px;">{symbol}</span></div>'
         f'<span style="background:{col_sig};color:#000;font-weight:700;font-size:9px;padding:2px 5px;border-radius:3px;">{icon_sig} {sig}</span>'
         f'</div>'
-        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
         f'<span style="font-weight:700;font-size:12px;">{_price_fmt(price)}</span>'
         f'<div style="display:flex;gap:8px;font-size:10px;">{_pct(p24, True)}'
         f'<span style="color:#444">7d {_pct(p7d, True)}</span></div>'
+        f'</div>'
+        f'<div style="display:flex;justify-content:space-between;font-size:10px;color:#555;border-top:1px solid #1e1e1e;padding-top:4px;">'
+        f'<span>MCap {_mcap_fmt(mcap)}</span>'
+        f'<span>Locked {locked}</span>'
         f'</div></div>'
     )
 
