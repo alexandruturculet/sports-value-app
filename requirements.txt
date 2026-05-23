@@ -5,3 +5,5 @@ pytz>=2024.1
 scipy>=1.11.0
 supabase>=2.0.0
 pytest>=8.0.0
+yfinance>=0.2.50
+pandas>=2.0.0

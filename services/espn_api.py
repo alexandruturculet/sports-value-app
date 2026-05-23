@@ -10,7 +10,7 @@ _BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
 
 _SLUGS = {
     "PL": "eng.1", "PD": "esp.1", "SA": "ita.1", "BL1": "ger.1",
-    "FL1": "fra.1", "PPL": "por.1", "DED": "ned.1", "ELC": "eng.2", "BSA": "bel.1",
+    "FL1": "fra.1", "PPL": "por.1", "DED": "ned.1", "ELC": "eng.2", "BJL": "bel.1",
 }
 
 

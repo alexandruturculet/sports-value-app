@@ -671,262 +671,279 @@ def render_match_card(r: dict) -> None:
             st.json(r["breakdown"])
 
 
-# ── Today's matches ───────────────────────────────────────────────────────────
 
-st.header(f"Today's Picks — {today_local.strftime('%d %B %Y')}")
+def _sports_display() -> None:
+    # ── Today's matches ───────────────────────────────────────────────────────────
 
-if today_results:
-    for r in today_results:
-        render_match_card(r)
-else:
-    st.info("No matches scheduled for today in the selected leagues.")
+    st.header(f"Today's Picks — {today_local.strftime('%d %B %Y')}")
 
-
-# ── Upcoming matches ──────────────────────────────────────────────────────────
-
-st.header("Upcoming Picks")
-
-if upcoming_results:
-    # Group by date
-    seen_dates: set = set()
-    for r in upcoming_results:
-        date_label = r["kickoff_date"].strftime("%A, %d %B %Y")
-        if date_label not in seen_dates:
-            seen_dates.add(date_label)
-            st.subheader(date_label)
-        render_match_card(r)
-else:
-    st.info("No upcoming matches in the next 7 days for the selected leagues.")
+    if today_results:
+        for r in today_results:
+            render_match_card(r)
+    else:
+        st.info("No matches scheduled for today in the selected leagues.")
 
 
-# ── Auto ticket ───────────────────────────────────────────────────────────────
+    # ── Upcoming matches ──────────────────────────────────────────────────────────
 
-ticket = build_ticket(today_results)
+    st.header("Upcoming Picks")
 
-# Auto-save today's ticket to Supabase whenever the app loads
-if ticket and ticket.get("ticket"):
-    save_ticket(ticket["ticket"], ticket.get("avg_confidence", 0), today_local.isoformat())
+    if upcoming_results:
+        # Group by date
+        seen_dates: set = set()
+        for r in upcoming_results:
+            date_label = r["kickoff_date"].strftime("%A, %d %B %Y")
+            if date_label not in seen_dates:
+                seen_dates.add(date_label)
+                st.subheader(date_label)
+            render_match_card(r)
+    else:
+        st.info("No upcoming matches in the next 7 days for the selected leagues.")
 
-st.header("Auto Ticket Builder")
-st.caption("Today's picks only — sorted by Expected Value")
 
-if ticket and ticket.get("ticket"):
-    _crest_map = {r["match"]: (r.get("home_crest", ""), r.get("away_crest", "")) for r in today_results}
-    _avg_conf = round(ticket.get("avg_confidence", 0), 1)
-    _conf_col = _conf_color(_avg_conf)
+    # ── Auto ticket ───────────────────────────────────────────────────────────────
 
-    _slip_rows = ""
-    for t in ticket["ticket"]:
-        h_crest, a_crest = _crest_map.get(t["match"], ("", ""))
-        h_img = _logo_img(h_crest, 18)
-        a_img = _logo_img(a_crest, 18)
-        parts = t["match"].split(" vs ", 1)
-        home_part = parts[0] if parts else t["match"]
-        away_part = parts[1] if len(parts) > 1 else ""
-        pred_bg, pred_fg = _PRED_STYLE.get(t["prediction"], ("#333", "#fff"))
-        ev_val = round(t.get("ev", 0), 3)
-        ev_col = "#4caf50" if ev_val > 0 else "#f44336"
-        ko = f'<span style="color:#555;font-size:10px;">🕐 {t["kickoff"]}</span>' if t.get("kickoff") else ""
-        _slip_rows += (
-            f'<div style="display:flex;align-items:center;gap:8px;padding:10px 0;'
-            f'border-bottom:1px solid rgba(255,255,255,0.06);">'
-            f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;">'
-            f'{h_img}<span style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{home_part}</span>'
-            f'<span style="color:#444;font-size:10px;flex-shrink:0;">vs</span>'
-            f'<span style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{away_part}</span>{a_img}'
+    ticket = build_ticket(today_results)
+
+    # Auto-save today's ticket to Supabase whenever the app loads
+    if ticket and ticket.get("ticket"):
+        save_ticket(ticket["ticket"], ticket.get("avg_confidence", 0), today_local.isoformat())
+
+    st.header("Auto Ticket Builder")
+    st.caption("Today's picks only — sorted by Expected Value")
+
+    if ticket and ticket.get("ticket"):
+        _crest_map = {r["match"]: (r.get("home_crest", ""), r.get("away_crest", "")) for r in today_results}
+        _avg_conf = round(ticket.get("avg_confidence", 0), 1)
+        _conf_col = _conf_color(_avg_conf)
+
+        _slip_rows = ""
+        for t in ticket["ticket"]:
+            h_crest, a_crest = _crest_map.get(t["match"], ("", ""))
+            h_img = _logo_img(h_crest, 18)
+            a_img = _logo_img(a_crest, 18)
+            parts = t["match"].split(" vs ", 1)
+            home_part = parts[0] if parts else t["match"]
+            away_part = parts[1] if len(parts) > 1 else ""
+            pred_bg, pred_fg = _PRED_STYLE.get(t["prediction"], ("#333", "#fff"))
+            ev_val = round(t.get("ev", 0), 3)
+            ev_col = "#4caf50" if ev_val > 0 else "#f44336"
+            ko = f'<span style="color:#555;font-size:10px;">🕐 {t["kickoff"]}</span>' if t.get("kickoff") else ""
+            _slip_rows += (
+                f'<div style="display:flex;align-items:center;gap:8px;padding:10px 0;'
+                f'border-bottom:1px solid rgba(255,255,255,0.06);">'
+                f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;">'
+                f'{h_img}<span style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{home_part}</span>'
+                f'<span style="color:#444;font-size:10px;flex-shrink:0;">vs</span>'
+                f'<span style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{away_part}</span>{a_img}'
+                f'</div>'
+                f'<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'
+                f'{ko}'
+                f'<span style="background:{pred_bg};color:{pred_fg};padding:2px 9px;border-radius:12px;font-size:11px;font-weight:700;">{t["prediction"]}</span>'
+                f'<span style="font-size:11px;font-weight:700;color:{ev_col};">EV {ev_val:+.3f}</span>'
+                f'</div></div>'
+            )
+
+        st.markdown(
+            f'<div style="background:#0a1a0a;border:1px solid rgba(93,214,93,0.18);border-radius:12px;padding:16px 20px;margin:4px 0;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+            f'<span style="font-size:11px;color:#5dd65d;text-transform:uppercase;letter-spacing:1px;font-weight:600;">📋 Today\'s Ticket</span>'
+            f'<span style="font-size:11px;color:#555;">{len(ticket["ticket"])} picks</span>'
             f'</div>'
-            f'<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'
-            f'{ko}'
-            f'<span style="background:{pred_bg};color:{pred_fg};padding:2px 9px;border-radius:12px;font-size:11px;font-weight:700;">{t["prediction"]}</span>'
-            f'<span style="font-size:11px;font-weight:700;color:{ev_col};">EV {ev_val:+.3f}</span>'
-            f'</div></div>'
+            f'{_slip_rows}'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08);">'
+            f'<span style="font-size:11px;color:#666;">Avg Confidence</span>'
+            f'<span style="font-size:16px;font-weight:700;color:{_conf_col};">{_avg_conf}%</span>'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="background:#1a0a0a;border:1px solid rgba(255,255,255,0.08);border-radius:12px;'
+            'padding:16px 20px;text-align:center;color:#666;font-size:13px;">No picks available for today</div>',
+            unsafe_allow_html=True,
         )
 
-    st.markdown(
-        f'<div style="background:#0a1a0a;border:1px solid rgba(93,214,93,0.18);border-radius:12px;padding:16px 20px;margin:4px 0;">'
-        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-        f'<span style="font-size:11px;color:#5dd65d;text-transform:uppercase;letter-spacing:1px;font-weight:600;">📋 Today\'s Ticket</span>'
-        f'<span style="font-size:11px;color:#555;">{len(ticket["ticket"])} picks</span>'
-        f'</div>'
-        f'{_slip_rows}'
-        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08);">'
-        f'<span style="font-size:11px;color:#666;">Avg Confidence</span>'
-        f'<span style="font-size:16px;font-weight:700;color:{_conf_col};">{_avg_conf}%</span>'
-        f'</div></div>',
-        unsafe_allow_html=True,
-    )
-else:
-    st.markdown(
-        '<div style="background:#1a0a0a;border:1px solid rgba(255,255,255,0.08);border-radius:12px;'
-        'padding:16px 20px;text-align:center;color:#666;font-size:13px;">No picks available for today</div>',
-        unsafe_allow_html=True,
-    )
+
+    # ── Ticket History ────────────────────────────────────────────────────────────
 
 
-# ── Ticket History ────────────────────────────────────────────────────────────
+    def _fetch_match_score(fixture_id: int) -> tuple[int, int] | None:
+        """Returns (home_goals, away_goals) if finished, else None."""
+        data = make_request(f"{BASE_URL}/matches/{fixture_id}")
+        if not data or data.get("status") != "FINISHED":
+            return None
+        score = data.get("score", {}).get("fullTime", {})
+        h, a = score.get("home"), score.get("away")
+        if h is None or a is None:
+            return None
+        return (int(h), int(a))
 
 
-def _fetch_match_score(fixture_id: int) -> tuple[int, int] | None:
-    """Returns (home_goals, away_goals) if finished, else None."""
-    data = make_request(f"{BASE_URL}/matches/{fixture_id}")
-    if not data or data.get("status") != "FINISHED":
-        return None
-    score = data.get("score", {}).get("fullTime", {})
-    h, a = score.get("home"), score.get("away")
-    if h is None or a is None:
-        return None
-    return (int(h), int(a))
+    def _pick_won(prediction: str, h: int, a: int) -> bool:
+        """Evaluate whether a pick was correct given the final score."""
+        p = prediction.strip()
+        if p == "1":
+            return h > a
+        if p == "2":
+            return a > h
+        if p == "X":
+            return h == a
+        if p == "1X":
+            return h >= a
+        if p == "X2":
+            return a >= h
+        if p == "BTTS":
+            return h >= 1 and a >= 1
+        if p in ("Over 2.5", "Over2.5"):
+            return h + a >= 3
+        if p in ("Under 2.5", "Under2.5"):
+            return h + a <= 2
+        return False
 
 
-def _pick_won(prediction: str, h: int, a: int) -> bool:
-    """Evaluate whether a pick was correct given the final score."""
-    p = prediction.strip()
-    if p == "1":
-        return h > a
-    if p == "2":
-        return a > h
-    if p == "X":
-        return h == a
-    if p == "1X":
-        return h >= a
-    if p == "X2":
-        return a >= h
-    if p == "BTTS":
-        return h >= 1 and a >= 1
-    if p in ("Over 2.5", "Over2.5"):
-        return h + a >= 3
-    if p in ("Under 2.5", "Under2.5"):
-        return h + a <= 2
-    return False
+    def _auto_evaluate_pending_tickets(today_str: str) -> None:
+        """Check all past pending tickets and auto-mark won/lost. Runs once per session."""
+        for ticket in get_all_tickets():
+            if ticket["result"] != "pending":
+                continue
+            if ticket["date"] >= today_str:
+                continue  # today's ticket — wait until tomorrow
+            picks = ticket.get("picks", [])
+            if not picks:
+                continue
+            outcomes = []
+            all_finished = True
+            for pick in picks:
+                fid = pick.get("fixture_id")
+                if not fid:
+                    all_finished = False
+                    break
+                score = _fetch_match_score(int(fid))
+                if score is None:
+                    all_finished = False
+                    break
+                outcomes.append(_pick_won(pick["prediction"], score[0], score[1]))
+            if all_finished and outcomes:
+                update_ticket_result(ticket["id"], "won" if all(outcomes) else "lost")
 
 
-def _auto_evaluate_pending_tickets(today_str: str) -> None:
-    """Check all past pending tickets and auto-mark won/lost. Runs once per session."""
-    for ticket in get_all_tickets():
-        if ticket["result"] != "pending":
-            continue
-        if ticket["date"] >= today_str:
-            continue  # today's ticket — wait until tomorrow
-        picks = ticket.get("picks", [])
-        if not picks:
-            continue
-        outcomes = []
-        all_finished = True
-        for pick in picks:
-            fid = pick.get("fixture_id")
-            if not fid:
-                all_finished = False
+    # Run evaluation once per session (not on every rerender)
+    if not st.session_state.get("_tickets_evaluated"):
+        _auto_evaluate_pending_tickets(today_local.isoformat())
+        st.session_state["_tickets_evaluated"] = True
+
+    st.header("Ticket History")
+    st.caption("Results are evaluated automatically once all matches in a ticket finish")
+
+    _tickets = get_all_tickets()
+
+    if not _tickets:
+        st.info("No tickets saved yet. Today's ticket saves automatically when picks are available.")
+    else:
+        _won = sum(1 for t in _tickets if t["result"] == "won")
+        _lost = sum(1 for t in _tickets if t["result"] == "lost")
+        _decided = _won + _lost
+        _win_rate = (_won / _decided * 100) if _decided > 0 else None
+
+        _streak, _streak_type = 0, ""
+        for _t in _tickets:
+            if _t["result"] == "pending":
+                continue
+            if not _streak_type:
+                _streak_type, _streak = _t["result"], 1
+            elif _t["result"] == _streak_type:
+                _streak += 1
+            else:
                 break
-            score = _fetch_match_score(int(fid))
-            if score is None:
-                all_finished = False
-                break
-            outcomes.append(_pick_won(pick["prediction"], score[0], score[1]))
-        if all_finished and outcomes:
-            update_ticket_result(ticket["id"], "won" if all(outcomes) else "lost")
+        _streak_label = (f"{'W' if _streak_type == 'won' else 'L'}{_streak}" if _streak_type else "—")
 
+        # W/L chip strip (last 15 decided tickets)
+        _chip_style = {
+            "won":  "background:#1a3d1a;color:#5dd65d;",
+            "lost": "background:#3d1a1a;color:#f55d5d;",
+        }
+        _decided_tickets = [t for t in _tickets if t["result"] in ("won", "lost")]
+        _chips = "".join(
+            f'<span style="{_chip_style[t["result"]]}padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;">{"W" if t["result"]=="won" else "L"}</span>'
+            for t in _decided_tickets[:15]
+        )
 
-# Run evaluation once per session (not on every rerender)
-if not st.session_state.get("_tickets_evaluated"):
-    _auto_evaluate_pending_tickets(today_local.isoformat())
-    st.session_state["_tickets_evaluated"] = True
+        # Summary bar
+        st.markdown(
+            f'<div style="background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;margin-bottom:12px;">'
+            f'<div style="display:flex;flex-wrap:wrap;gap:20px;align-items:center;margin-bottom:12px;">'
+            f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Total</div><div style="font-size:18px;font-weight:700;">{len(_tickets)}</div></div>'
+            f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Won</div><div style="font-size:18px;font-weight:700;color:#5dd65d;">{_won}</div></div>'
+            f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Lost</div><div style="font-size:18px;font-weight:700;color:#f55d5d;">{_lost}</div></div>'
+            f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Win Rate</div><div style="font-size:18px;font-weight:700;">{f"{_win_rate:.0f}%" if _win_rate is not None else "—"}</div></div>'
+            f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Streak</div><div style="font-size:18px;font-weight:700;color:{"#5dd65d" if _streak_type=="won" else "#f55d5d" if _streak_type else "#888"};">{_streak_label}</div></div>'
+            f'</div>'
+            + (f'<div style="display:flex;gap:4px;flex-wrap:wrap;">{_chips}</div>' if _chips else "")
+            + '</div>',
+            unsafe_allow_html=True,
+        )
 
-st.header("Ticket History")
-st.caption("Results are evaluated automatically once all matches in a ticket finish")
+        _RESULT_BADGE = {
+            "won":     "background:#0d2d0d;color:#5dd65d;border:1px solid rgba(93,214,93,0.3);",
+            "lost":    "background:#2d0d0d;color:#f55d5d;border:1px solid rgba(245,93,93,0.3);",
+            "pending": "background:#2d2700;color:#f5d45d;border:1px solid rgba(245,212,93,0.3);",
+        }
+        _RESULT_LABEL = {"won": "WON", "lost": "LOST", "pending": "PENDING"}
 
-_tickets = get_all_tickets()
+        for _t in _tickets:
+            _date = _t["date"]
+            _result = _t.get("result", "pending")
+            _picks = _t.get("picks", [])
+            _avg_conf = _t.get("avg_confidence", 0)
+            _badge_style = _RESULT_BADGE.get(_result, _RESULT_BADGE["pending"])
+            _badge_label = _RESULT_LABEL.get(_result, "PENDING")
+            _exp_label = f"{_date}  ·  {_badge_label}  ·  {len(_picks)} picks"
 
-if not _tickets:
-    st.info("No tickets saved yet. Today's ticket saves automatically when picks are available.")
-else:
-    _won = sum(1 for t in _tickets if t["result"] == "won")
-    _lost = sum(1 for t in _tickets if t["result"] == "lost")
-    _decided = _won + _lost
-    _win_rate = (_won / _decided * 100) if _decided > 0 else None
-
-    _streak, _streak_type = 0, ""
-    for _t in _tickets:
-        if _t["result"] == "pending":
-            continue
-        if not _streak_type:
-            _streak_type, _streak = _t["result"], 1
-        elif _t["result"] == _streak_type:
-            _streak += 1
-        else:
-            break
-    _streak_label = (f"{'W' if _streak_type == 'won' else 'L'}{_streak}" if _streak_type else "—")
-
-    # W/L chip strip (last 15 decided tickets)
-    _chip_style = {
-        "won":  "background:#1a3d1a;color:#5dd65d;",
-        "lost": "background:#3d1a1a;color:#f55d5d;",
-    }
-    _decided_tickets = [t for t in _tickets if t["result"] in ("won", "lost")]
-    _chips = "".join(
-        f'<span style="{_chip_style[t["result"]]}padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;">{"W" if t["result"]=="won" else "L"}</span>'
-        for t in _decided_tickets[:15]
-    )
-
-    # Summary bar
-    st.markdown(
-        f'<div style="background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;margin-bottom:12px;">'
-        f'<div style="display:flex;flex-wrap:wrap;gap:20px;align-items:center;margin-bottom:12px;">'
-        f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Total</div><div style="font-size:18px;font-weight:700;">{len(_tickets)}</div></div>'
-        f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Won</div><div style="font-size:18px;font-weight:700;color:#5dd65d;">{_won}</div></div>'
-        f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Lost</div><div style="font-size:18px;font-weight:700;color:#f55d5d;">{_lost}</div></div>'
-        f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Win Rate</div><div style="font-size:18px;font-weight:700;">{f"{_win_rate:.0f}%" if _win_rate is not None else "—"}</div></div>'
-        f'<div style="text-align:center;"><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px;">Streak</div><div style="font-size:18px;font-weight:700;color:{"#5dd65d" if _streak_type=="won" else "#f55d5d" if _streak_type else "#888"};">{_streak_label}</div></div>'
-        f'</div>'
-        + (f'<div style="display:flex;gap:4px;flex-wrap:wrap;">{_chips}</div>' if _chips else "")
-        + '</div>',
-        unsafe_allow_html=True,
-    )
-
-    _RESULT_BADGE = {
-        "won":     "background:#0d2d0d;color:#5dd65d;border:1px solid rgba(93,214,93,0.3);",
-        "lost":    "background:#2d0d0d;color:#f55d5d;border:1px solid rgba(245,93,93,0.3);",
-        "pending": "background:#2d2700;color:#f5d45d;border:1px solid rgba(245,212,93,0.3);",
-    }
-    _RESULT_LABEL = {"won": "WON", "lost": "LOST", "pending": "PENDING"}
-
-    for _t in _tickets:
-        _date = _t["date"]
-        _result = _t.get("result", "pending")
-        _picks = _t.get("picks", [])
-        _avg_conf = _t.get("avg_confidence", 0)
-        _badge_style = _RESULT_BADGE.get(_result, _RESULT_BADGE["pending"])
-        _badge_label = _RESULT_LABEL.get(_result, "PENDING")
-        _exp_label = f"{_date}  ·  {_badge_label}  ·  {len(_picks)} picks"
-
-        with st.expander(_exp_label):
-            st.markdown(
-                f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
-                f'<span style="font-weight:600;font-size:13px;">{_date}</span>'
-                f'<span style="{_badge_style}padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;">{_badge_label}</span>'
-                f'<span style="color:#555;font-size:11px;margin-left:auto;">{len(_picks)} picks · avg conf {round(_avg_conf, 1)}%</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            for _p in _picks:
-                _ppred = _p["prediction"]
-                _ppb, _ppf = _PRED_STYLE.get(_ppred, ("#333", "#fff"))
-                _pev = round(_p.get("ev", 0), 3)
-                _pev_col = "#4caf50" if _pev > 0 else "#f44336"
+            with st.expander(_exp_label):
                 st.markdown(
-                    f'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
-                    f'<span style="font-size:12px;font-weight:600;flex:1;">{_p["match"]}</span>'
-                    f'<span style="background:{_ppb};color:{_ppf};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;">{_ppred}</span>'
-                    f'<span style="font-size:11px;color:{_pev_col};font-weight:600;">EV {_pev:+.3f}</span>'
-                    f'<span style="font-size:11px;color:#555;">Kelly {round(_p.get("kelly",0),3)}</span>'
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
+                    f'<span style="font-weight:600;font-size:13px;">{_date}</span>'
+                    f'<span style="{_badge_style}padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;">{_badge_label}</span>'
+                    f'<span style="color:#555;font-size:11px;margin-left:auto;">{len(_picks)} picks · avg conf {round(_avg_conf, 1)}%</span>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+                for _p in _picks:
+                    _ppred = _p["prediction"]
+                    _ppb, _ppf = _PRED_STYLE.get(_ppred, ("#333", "#fff"))
+                    _pev = round(_p.get("ev", 0), 3)
+                    _pev_col = "#4caf50" if _pev > 0 else "#f44336"
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
+                        f'<span style="font-size:12px;font-weight:600;flex:1;">{_p["match"]}</span>'
+                        f'<span style="background:{_ppb};color:{_ppf};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;">{_ppred}</span>'
+                        f'<span style="font-size:11px;color:{_pev_col};font-weight:600;">EV {_pev:+.3f}</span>'
+                        f'<span style="font-size:11px;color:#555;">Kelly {round(_p.get("kelly",0),3)}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
-            if is_admin:
-                _ov_col1, _ov_col2, _ov_col3 = st.columns([1, 1, 3])
-                if _ov_col1.button("✅ Won", key=f"won_{_t['id']}"):
-                    update_ticket_result(_t["id"], "won")
-                    st.rerun()
-                if _ov_col2.button("❌ Lost", key=f"lost_{_t['id']}"):
-                    update_ticket_result(_t["id"], "lost")
-                    st.rerun()
+                if is_admin:
+                    _ov_col1, _ov_col2, _ov_col3 = st.columns([1, 1, 3])
+                    if _ov_col1.button("✅ Won", key=f"won_{_t['id']}"):
+                        update_ticket_result(_t["id"], "won")
+                        st.rerun()
+                    if _ov_col2.button("❌ Lost", key=f"lost_{_t['id']}"):
+                        update_ticket_result(_t["id"], "lost")
+                        st.rerun()
+
+
+
+tab1, tab2, tab3 = st.tabs(["⚽ Sports Betting", "₿ Crypto", "📈 Markets"])
+
+with tab1:
+    _sports_display()
+
+with tab2:
+    from sections.crypto import render as _rc
+    _rc()
+
+with tab3:
+    from sections.markets import render as _rm
+    _rm()
