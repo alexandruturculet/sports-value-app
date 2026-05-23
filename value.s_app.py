@@ -568,6 +568,9 @@ def render_match_card(r: dict) -> None:
                     st.warning("API-Football daily limit reached (100 req/day). Try again tomorrow.")
                 else:
                     st.caption("No stats available — team not found in API-Football for this league.")
+                if st.button("↩ Retry", key=f"retry_stats_{r.get('fixture_id', r['match'])}"):
+                    del st.session_state[_stats_key]
+                    st.rerun()
             else:
                 st.markdown("**Season Stats**")
                 _sc1, _sc2 = st.columns(2)
