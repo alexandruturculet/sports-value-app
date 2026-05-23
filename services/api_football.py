@@ -34,7 +34,11 @@ def _get_key() -> str | None:
     return key
 
 
+_api_rate_limited = False
+
+
 def _get(url: str) -> dict:
+    global _api_rate_limited
     api_key = _get_key()
     if not api_key:
         logger.debug("FOOTBALL_API_KEY not set — skipping API-Football call")
@@ -42,9 +46,14 @@ def _get(url: str) -> dict:
     headers = {"x-apisports-key": api_key}
     try:
         r = requests.get(url, headers=headers, timeout=10)
-        if r.status_code == 429:
+        remaining = r.headers.get("x-ratelimit-requests-remaining")
+        if remaining is not None:
+            logger.info("API-Football requests remaining today: %s", remaining)
+        if r.status_code == 429 or remaining == "0":
             logger.warning("API-Football rate limit hit for %s", url)
+            _api_rate_limited = True
             return {}
+        _api_rate_limited = False
         if r.status_code != 200:
             logger.error("API-Football error %s for %s", r.status_code, url)
             return {}
@@ -52,6 +61,10 @@ def _get(url: str) -> dict:
     except Exception as e:
         logger.exception("API-Football request failed for %s: %s", url, e)
         return {}
+
+
+def is_api_rate_limited() -> bool:
+    return _api_rate_limited
 
 
 def _normalize(name: str) -> str:
@@ -217,16 +230,13 @@ def _get_team_id(team_name: str, competition_code: str) -> int | None:
         return None
     season = _current_season()
     normalized = _normalize(team_name).title()
-    for name in [team_name, normalized]:
-        enc = urllib.parse.quote(name)
-        data = _get(f"{BASE_URL}/teams?name={enc}&league={league_id}&season={season}")
-        if data.get("response"):
-            return data["response"][0]["team"]["id"]
-    first_word = urllib.parse.quote(team_name.split()[0])
-    data = _get(f"{BASE_URL}/teams?search={first_word}&league={league_id}&season={season}")
-    for t in data.get("response", []):
-        if _names_match(team_name, t["team"]["name"]):
-            return t["team"]["id"]
+    # search= is fuzzy; try normalized name first, then first word
+    for search_term in [normalized, team_name.split()[0]]:
+        enc = urllib.parse.quote(search_term)
+        data = _get(f"{BASE_URL}/teams?search={enc}&league={league_id}&season={season}")
+        for t in data.get("response", []):
+            if _names_match(team_name, t["team"]["name"]):
+                return t["team"]["id"]
     return None
 
 
