@@ -1,7 +1,7 @@
 import json
 import streamlit as st
 import streamlit.components.v1 as components
-from services.coingecko import get_market_overview, get_top_coins, get_fear_greed
+from services.coingecko import get_market_overview, get_top_coins, get_fear_greed, get_fear_greed_history
 from services.cryptopanic import get_news
 
 # ── Personal watchlist (CoinGecko IDs) ───────────────────────────────────────
@@ -35,6 +35,12 @@ _PORTFOLIO = {
 }
 
 _PORTFOLIO_IDS = tuple(_PORTFOLIO.keys())
+
+_NEWS_KEYWORDS = {m["symbol"].lower() for m in _PORTFOLIO.values()} | {
+    "render network", "fetch.ai", "artificial superintelligence",
+    "celestia", "pyth", "peaq", "aioz", "mavia", "prime",
+    "verasity", "cronos", "io.net",
+}
 
 _SIG_STYLE = {
     "STRONG BUY":  ("#0d2b0d", "#4caf50", "▲▲"),
@@ -209,14 +215,35 @@ def _pct(pct: float | None, small: bool = False) -> str:
     return f'<span style="color:{color};font-weight:600;font-size:{fs}">{arrow} {abs(pct):.1f}%</span>'
 
 
+def _ath_badge(ath_pct: float | None) -> str:
+    if ath_pct is None:
+        return ""
+    color = "#f44336" if ath_pct > -20 else "#ff9800" if ath_pct > -50 else "#4caf50"
+    return (
+        f'<span style="background:#111;color:{color};font-size:9px;'
+        f'padding:2px 5px;border-radius:3px;font-weight:600;">'
+        f'{ath_pct:.0f}% ATH</span>'
+    )
+
+
 def _compute_signal(coin: dict) -> str:
-    p24 = coin.get("price_change_percentage_24h_in_currency") or 0
-    p7d = coin.get("price_change_percentage_7d_in_currency") or 0
+    p24      = coin.get("price_change_percentage_24h_in_currency") or 0
+    p7d      = coin.get("price_change_percentage_7d_in_currency")  or 0
+    ath_pct  = coin.get("ath_change_percentage") or 0
+    vol      = coin.get("total_volume") or 0
+    mcap     = coin.get("market_cap") or 1
+    vol_ratio = vol / mcap
+
+    deep_dip = ath_pct < -75
+    high_vol  = vol_ratio > 0.12
+
     if p24 < -8 and p7d < -20:
         return "STRONG BUY"
-    if -8 <= p24 < -4 and p7d < 0:
+    if p24 < -5 and p7d < -10 and deep_dip:
         return "BUY"
-    if p24 > 12 and p7d > 30:
+    if -8 <= p24 < -3 and p7d < 0:
+        return "BUY"
+    if p24 > 12 and p7d > 30 and high_vol:
         return "STRONG SELL"
     if p24 > 8 and p7d > 20:
         return "SELL"
@@ -262,9 +289,10 @@ def _portfolio_row(coin_id: str, coin_data: dict | None, total_value: float, spa
     staking_apy = meta.get("staking_apy")
     staked = meta.get("staked")
 
-    price = (coin_data.get("current_price") or 0) if coin_data else 0
-    p24 = (coin_data.get("price_change_percentage_24h_in_currency")) if coin_data else None
-    img = (coin_data.get("image") or "") if coin_data else ""
+    price   = (coin_data.get("current_price") or 0) if coin_data else 0
+    p24     = (coin_data.get("price_change_percentage_24h_in_currency")) if coin_data else None
+    ath_pct = (coin_data.get("ath_change_percentage")) if coin_data else None
+    img     = (coin_data.get("image") or "") if coin_data else ""
 
     value = qty * price
     pct_of_total = (value / total_value * 100) if total_value > 0 and value > 0 else 0
@@ -323,6 +351,7 @@ def _portfolio_row(coin_id: str, coin_data: dict | None, total_value: float, spa
         f'<div style="text-align:center;flex-shrink:0;min-width:76px;">'
         f'<div style="font-size:11px;color:#666;margin-bottom:2px;">{price_str}</div>'
         f'{_pct(p24, True)}'
+        f'<div style="margin-top:3px;">{_ath_badge(ath_pct)}</div>'
         f'</div>'
         f'<div style="text-align:right;flex-shrink:0;min-width:95px;">'
         f'<div style="font-weight:700;font-size:13px;">{value_str}</div>'
@@ -341,10 +370,10 @@ def _watchlist_card(coin: dict) -> str:
     p7d = coin.get("price_change_percentage_7d_in_currency")
     mcap = coin.get("market_cap")
     img = coin.get("image", "")
+    ath_pct = coin.get("ath_change_percentage")
     sig = _compute_signal(coin)
     _, col_sig, icon_sig = _SIG_STYLE[sig]
     img_tag = f'<img src="{img}" style="width:18px;height:18px;border-radius:50%;margin-right:5px;vertical-align:middle">' if img else ""
-    locked = _locked_pct(coin)
     return (
         f'<div style="background:#111;border:1px solid #1e1e1e;border-radius:8px;padding:9px 11px;margin-bottom:5px;">'
         f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
@@ -356,9 +385,9 @@ def _watchlist_card(coin: dict) -> str:
         f'<div style="display:flex;gap:8px;font-size:10px;">{_pct(p24, True)}'
         f'<span style="color:#444">7d {_pct(p7d, True)}</span></div>'
         f'</div>'
-        f'<div style="display:flex;justify-content:space-between;font-size:10px;color:#555;border-top:1px solid #1e1e1e;padding-top:4px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#555;border-top:1px solid #1e1e1e;padding-top:4px;">'
         f'<span>MCap {_mcap_fmt(mcap)}</span>'
-        f'<span>Locked {locked}</span>'
+        f'{_ath_badge(ath_pct)}'
         f'</div></div>'
     )
 
@@ -430,6 +459,27 @@ def render():
 
         n_positions = sum(1 for _, cd, v in rows if v > 0)
 
+        weights = [v / total_value for _, _, v in rows if v > 0 and total_value > 0]
+        hhi = sum(w ** 2 for w in weights)
+        div_score = round((1 - hhi) * 100)
+        div_color = "#f44336" if div_score < 40 else "#ff9800" if div_score < 65 else "#4caf50"
+        concentrated = [
+            (_PORTFOLIO[cid]["symbol"], v / total_value * 100)
+            for cid, _, v in rows if total_value > 0 and v / total_value > 0.30
+        ]
+        div_html = (
+            f'<div style="margin-top:10px;padding-top:10px;border-top:1px solid #1e1e1e;">'
+            f'<div style="font-size:9px;color:#444;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:4px;">Diversification Score</div>'
+            f'<div style="height:4px;background:#1a1a1a;border-radius:2px;margin-bottom:4px;">'
+            f'<div style="height:4px;width:{div_score}%;background:{div_color};border-radius:2px;"></div></div>'
+            f'<div style="font-size:10px;color:{div_color};font-weight:600;">{div_score}/100'
+            + "".join(
+                f'&nbsp;&nbsp;<span style="color:#ff9800;">⚠️ {sym} dominates at {pct:.1f}%</span>'
+                for sym, pct in concentrated
+            )
+            + f'</div></div>'
+        )
+
         insights_html = ""
         if best and worst and best[0] != worst[0]:
             insights_html = (
@@ -459,6 +509,7 @@ def render():
             f'<span style="font-size:11px;font-weight:400;opacity:0.7;margin-left:6px;">({sign}{pct_24h:.1f}%)</span>'
             f'</div>'
             f'{insights_html}'
+            f'{div_html}'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -487,15 +538,19 @@ def render():
 
     # ── Fear & Greed ──────────────────────────────────────────────────────────
     fng = get_fear_greed()
+    fng_history = get_fear_greed_history(30)
     if fng:
         val = int(fng.get("value", 50))
         label, color = _fng_label(val)
+        fng_spark = _sparkline_svg(fng_history, width=120, height=28) if fng_history else ""
         st.markdown(
             f'<div style="background:#111;border:1px solid {color}44;border-radius:10px;'
             f'padding:12px 20px;display:flex;align-items:center;gap:20px;margin-bottom:18px;">'
             f'<div style="font-size:34px;font-weight:900;color:{color}">{val}</div>'
-            f'<div><div style="font-size:15px;font-weight:700;color:{color}">{label}</div>'
-            f'<div style="color:#555;font-size:11px;">Fear &amp; Greed Index</div></div></div>',
+            f'<div style="flex:1;"><div style="font-size:15px;font-weight:700;color:{color}">{label}</div>'
+            f'<div style="color:#555;font-size:11px;">Fear &amp; Greed Index · 30-day trend</div></div>'
+            f'{fng_spark}'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
@@ -546,16 +601,35 @@ def render():
     # ── Crypto News ───────────────────────────────────────────────────────────
     st.markdown("### Crypto News")
     with st.spinner("Loading headlines…"):
-        news = get_news(12)
+        news = get_news(50)
 
     if news:
-        for item in news:
+        portfolio_news = [
+            n for n in news
+            if any(kw in n.get("title", "").lower() for kw in _NEWS_KEYWORDS)
+        ]
+        general_news = [n for n in news if n not in portfolio_news]
+        display_news = portfolio_news[:8] + general_news[:4]
+
+        if not portfolio_news:
+            st.caption("No portfolio-specific news found — showing general headlines.")
+
+        portfolio_set = set(id(n) for n in portfolio_news[:8])
+        for item in display_news:
             title = item.get("title", "")
             url = item.get("url", "")
             source = item.get("source", "")
             pub = item.get("published", "")[:16]
+            is_portfolio = id(item) in portfolio_set
+            badge = (
+                '<span style="background:#0d2b0d;color:#4caf50;font-size:8px;'
+                'padding:1px 5px;border-radius:3px;margin-right:6px;font-weight:700;">📌 Portfolio</span>'
+                if is_portfolio else ""
+            )
+            border_col = "#2ea043" if is_portfolio else "#333"
             st.markdown(
-                f'<div style="border-left:3px solid #333;padding:8px 14px;margin-bottom:8px">'
+                f'<div style="border-left:3px solid {border_col};padding:8px 14px;margin-bottom:8px">'
+                f'{badge}'
                 f'<a href="{url}" target="_blank" style="color:#e0e0e0;text-decoration:none;'
                 f'font-weight:600;font-size:14px">{title}</a>'
                 f'<div style="color:#555;font-size:11px;margin-top:3px">{source} · {pub}</div></div>',

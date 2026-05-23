@@ -76,3 +76,11 @@ def get_fear_greed() -> dict:
     if isinstance(data, dict) and data.get("data"):
         return data["data"][0]
     return {}
+
+
+@st.cache_data(ttl=3600)
+def get_fear_greed_history(days: int = 30) -> list:
+    data = _get(_FNG_URL, params={"limit": days})
+    if isinstance(data, dict) and data.get("data"):
+        return [int(d["value"]) for d in reversed(data["data"])]
+    return []
