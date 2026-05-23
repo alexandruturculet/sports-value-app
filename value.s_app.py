@@ -125,44 +125,58 @@ st.markdown("""
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
+_DEFAULT_LEAGUES = ["Premier League", "La Liga", "Serie A"]
+
 with st.sidebar:
-    st.markdown("### ⚽ Leagues")
-    leagues = st.multiselect(
-        "Select leagues",
-        ALL_LEAGUES,
-        default=["Premier League", "La Liga", "Serie A"],
+    _section = st.radio(
+        "Navigate",
+        ["⚽ Sports Betting", "₿ Crypto", "📈 Markets"],
         label_visibility="collapsed",
+        key="nav_section",
     )
 
-    st.divider()
-
-    now = datetime.now(timezone.utc).timestamp()
-    last_refresh = st.session_state.get("last_refresh", 0)
-    seconds_since = now - last_refresh
-    can_refresh = seconds_since >= REFRESH_COOLDOWN_SECONDS
-
-    if st.button("🔄 Refresh predictions", disabled=not can_refresh, use_container_width=True):
-        st.cache_data.clear()
-        st.session_state["last_refresh"] = now
-        st.rerun()
-
-    if not can_refresh:
-        wait = int(REFRESH_COOLDOWN_SECONDS - seconds_since)
-        st.markdown(
-            f'<div style="text-align:center;font-size:11px;color:#555;margin-top:4px;">Next refresh in {wait}s</div>',
-            unsafe_allow_html=True,
-        )
-    elif last_refresh:
-        _last_str = datetime.fromtimestamp(last_refresh, tz=DISPLAY_TZ).strftime("%H:%M")
-        st.markdown(
-            f'<div style="text-align:center;font-size:11px;color:#555;margin-top:4px;">Last refreshed {_last_str}</div>',
-            unsafe_allow_html=True,
+    if _section == "⚽ Sports Betting":
+        st.divider()
+        st.markdown("### ⚽ Leagues")
+        leagues = st.multiselect(
+            "Select leagues",
+            ALL_LEAGUES,
+            default=_DEFAULT_LEAGUES,
+            label_visibility="collapsed",
         )
 
-    st.divider()
-    _admin_pw = os.getenv("ADMIN_PASSWORD", "")
-    _entered_pw = st.text_input("Admin", type="password", placeholder="Admin password", label_visibility="collapsed")
-    is_admin = bool(_admin_pw and _entered_pw == _admin_pw)
+        st.divider()
+
+        now = datetime.now(timezone.utc).timestamp()
+        last_refresh = st.session_state.get("last_refresh", 0)
+        seconds_since = now - last_refresh
+        can_refresh = seconds_since >= REFRESH_COOLDOWN_SECONDS
+
+        if st.button("🔄 Refresh predictions", disabled=not can_refresh, use_container_width=True):
+            st.cache_data.clear()
+            st.session_state["last_refresh"] = now
+            st.rerun()
+
+        if not can_refresh:
+            wait = int(REFRESH_COOLDOWN_SECONDS - seconds_since)
+            st.markdown(
+                f'<div style="text-align:center;font-size:11px;color:#555;margin-top:4px;">Next refresh in {wait}s</div>',
+                unsafe_allow_html=True,
+            )
+        elif last_refresh:
+            _last_str = datetime.fromtimestamp(last_refresh, tz=DISPLAY_TZ).strftime("%H:%M")
+            st.markdown(
+                f'<div style="text-align:center;font-size:11px;color:#555;margin-top:4px;">Last refreshed {_last_str}</div>',
+                unsafe_allow_html=True,
+            )
+
+        st.divider()
+        _admin_pw = os.getenv("ADMIN_PASSWORD", "")
+        _entered_pw = st.text_input("Admin", type="password", placeholder="Admin password", label_visibility="collapsed")
+        is_admin = bool(_admin_pw and _entered_pw == _admin_pw)
+    else:
+        leagues = _DEFAULT_LEAGUES
+        is_admin = False
 
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
@@ -935,15 +949,11 @@ def _sports_display() -> None:
 
 
 
-tab1, tab2, tab3 = st.tabs(["⚽ Sports Betting", "₿ Crypto", "📈 Markets"])
-
-with tab1:
+if _section == "⚽ Sports Betting":
     _sports_display()
-
-with tab2:
+elif _section == "₿ Crypto":
     from sections.crypto import render as _rc
     _rc()
-
-with tab3:
+else:
     from sections.markets import render as _rm
     _rm()
