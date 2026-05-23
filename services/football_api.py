@@ -22,7 +22,7 @@ LEAGUE_CODES = {
     "Liga Portugal": "PPL",
     "Eredivisie": "DED",
     "Championship": "ELC",
-    "Belgian Pro League": "BSA",
+    "Belgian Pro League": "BEL",
 }
 
 BASE_URL = "https://api.football-data.org/v4"

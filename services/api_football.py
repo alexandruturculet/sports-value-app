@@ -14,7 +14,7 @@ BASE_URL = "https://v3.football.api-sports.io"
 
 _LEAGUE_IDS = {
     "PL": 39, "PD": 140, "SA": 135, "BL1": 78,
-    "FL1": 61, "PPL": 94, "DED": 88, "ELC": 40, "BSA": 144,
+    "FL1": 61, "PPL": 94, "DED": 88, "ELC": 40, "BEL": 144,
 }
 
 def _current_season() -> int:
