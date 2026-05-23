@@ -225,15 +225,11 @@ def get_injuries(team_name: str) -> list:
 
 @st.cache_data(ttl=604800)
 def _get_team_id(team_name: str, competition_code: str) -> int | None:
-    league_id = _LEAGUE_IDS.get(competition_code)
-    if not league_id:
-        return None
-    season = _current_season()
     normalized = _normalize(team_name).title()
-    # search= is fuzzy; try normalized name first, then first word
+    # Search globally (no league filter) — more reliable across all name formats
     for search_term in [normalized, team_name.split()[0]]:
         enc = urllib.parse.quote(search_term)
-        data = _get(f"{BASE_URL}/teams?search={enc}&league={league_id}&season={season}")
+        data = _get(f"{BASE_URL}/teams?search={enc}")
         for t in data.get("response", []):
             if _names_match(team_name, t["team"]["name"]):
                 return t["team"]["id"]
