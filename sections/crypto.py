@@ -168,48 +168,72 @@ function toggleChart(id){{
     components.html(html, height=len(rows) * 72 + 460, scrolling=False)
 
 
-_PIE_COLORS = [
-    "#4caf50", "#2196f3", "#ff9800", "#e91e63", "#9c27b0",
-    "#00bcd4", "#8bc34a", "#ff5722", "#607d8b", "#795548",
-    "#f44336", "#3f51b5",
-]
-
-
 def _render_allocation_pie(rows: list, total_value: float, portfolio: dict) -> None:
     import plotly.graph_objects as go
 
-    labels, values, colors = [], [], []
-    for i, (coin_id, cd, value) in enumerate(rows):
-        if value > 0:
-            labels.append(portfolio[coin_id]["symbol"])
-            values.append(round(value, 2))
-            colors.append(_PIE_COLORS[i % len(_PIE_COLORS)])
-
-    if not values:
+    pie_rows = [
+        (portfolio[cid]["symbol"], round(v, 2))
+        for cid, _, v in rows if v > 0
+    ]
+    if not pie_rows:
         return
+
+    labels = [r[0] for r in pie_rows]
+    values = [r[1] for r in pie_rows]
+
+    _PALETTE = [
+        "#818CF8", "#34D399", "#FB923C", "#F472B6", "#60A5FA",
+        "#FBBF24", "#A78BFA", "#4ADE80", "#F87171", "#38BDF8",
+        "#E879F9", "#2DD4BF",
+    ]
+    colors = [_PALETTE[i % len(_PALETTE)] for i in range(len(labels))]
+
+    max_idx = values.index(max(values))
+    pull = [0.05 if i == max_idx else 0 for i in range(len(labels))]
 
     fig = go.Figure(go.Pie(
         labels=labels,
         values=values,
-        hole=0.55,
-        marker=dict(colors=colors, line=dict(color="#0d1117", width=2)),
-        textinfo="label+percent",
-        textfont=dict(size=11),
-        hovertemplate="%{label}<br>$%{value:,.2f}<br>%{percent}<extra></extra>",
+        hole=0.66,
+        pull=pull,
+        marker=dict(colors=colors, line=dict(color="#0a0d14", width=3)),
+        textinfo="none",
+        hovertemplate="<b>%{label}</b><br>$%{value:,.2f}<br><b>%{percent}</b><extra></extra>",
         sort=False,
     ))
+
     fig.add_annotation(
         text=f"<b>${total_value:,.0f}</b>",
-        x=0.5, y=0.5, showarrow=False,
-        font=dict(size=15, color="#e0e0e0"),
+        x=0.5, y=0.57, showarrow=False,
+        font=dict(size=22, color="#f1f5f9"),
     )
+    fig.add_annotation(
+        text="TOTAL VALUE",
+        x=0.5, y=0.43, showarrow=False,
+        font=dict(size=9, color="#475569"),
+    )
+
     fig.update_layout(
-        paper_bgcolor="#0d1117",
-        plot_bgcolor="#0d1117",
-        margin=dict(t=10, b=10, l=10, r=10),
-        height=300,
-        showlegend=False,
-        font=dict(color="#e0e0e0", family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(t=16, b=16, l=0, r=200),
+        height=360,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            x=1.02, y=0.5,
+            xanchor="left",
+            yanchor="middle",
+            font=dict(size=11, color="#94a3b8"),
+            bgcolor="rgba(0,0,0,0)",
+            borderwidth=0,
+            itemsizing="constant",
+        ),
+        hoverlabel=dict(
+            bgcolor="#1e293b",
+            bordercolor="#334155",
+            font=dict(size=13, color="#f1f5f9"),
+        ),
     )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
