@@ -25,17 +25,17 @@ _SECTOR_NAMES = {
 
 _DATA_CENTER_STACK = {
     "Energy": {
-        "tickers": ("CEG", "VST", "OKLO", "EOSE", "GEV"),
+        "tickers": ("CEG", "VST", "OKLO", "EOSE", "GEV", "NEOV"),
         "accent": "#FB923C",
         "icon": "⚡",
     },
     "Chips & Computing": {
-        "tickers": ("NVDA", "AMD", "TSM", "MU", "ARM"),
+        "tickers": ("NVDA", "AMD", "TSM", "MU", "ARM", "RGTI", "ARQQ"),
         "accent": "#818CF8",
         "icon": "💎",
     },
     "Cloud / Data Centers": {
-        "tickers": ("NBIS", "IREN", "CRWV", "APLD", "CIFR"),
+        "tickers": ("NBIS", "IREN", "CRWV", "APLD", "CIFR", "CORZ", "WYFI", "RAMP"),
         "accent": "#34D399",
         "icon": "☁️",
     },
