@@ -293,12 +293,11 @@ def _render_stock_portfolio(positions: list, quotes: dict, sparklines: dict) -> 
         cards_html += _stock_portfolio_card(
             pos, quotes.get(ticker), total_invested_by_cur, sparkline_prices, safe_id
         )
-        if pos.get("tv_symbol"):
-            cards_html += (
-                f'<div id="chart_{safe_id}" style="display:none;margin-bottom:6px;">'
-                f'<div id="tv_{safe_id}" style="height:440px;"></div>'
-                f'</div>'
-            )
+        cards_html += (
+            f'<div id="chart_{safe_id}" style="display:none;margin-bottom:6px;">'
+            f'<div id="tv_{safe_id}" style="height:440px;"></div>'
+            f'</div>'
+        )
 
     tv_json = json.dumps(tv_safe)
     html = f"""<!DOCTYPE html><html><head>
@@ -325,6 +324,8 @@ function toggleChart(id){{
     if(!loaded[id]&&TV[id]){{
       new TradingView.widget({{width:'100%',height:440,symbol:TV[id],interval:'D',timezone:'Europe/Bucharest',theme:'dark',style:'1',locale:'en',allow_symbol_change:true,container_id:'tv_'+id}});
       loaded[id]=true;
+    }}else if(!TV[id]){{
+      document.getElementById('tv_'+id).innerHTML='<div style="padding:20px;color:#555;font-size:12px;text-align:center;">No TradingView symbol set — open ✏️ Edit Portfolio and add it (e.g. XETR:SEC0, NASDAQ:NVDA)</div>';
     }}
   }}else{{c.style.display='none';active=null;}}
 }}
