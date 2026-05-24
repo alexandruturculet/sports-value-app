@@ -1017,14 +1017,25 @@ def _sports_display() -> None:
             _exp_label = f"{_date}  ·  {_badge_label}  ·  {len(_picks)} picks"
 
             with st.expander(_exp_label):
-                st.markdown(
-                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
-                    f'<span style="font-weight:600;font-size:13px;">{_date}</span>'
-                    f'<span style="{_badge_style}padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;">{_badge_label}</span>'
-                    f'<span style="color:#555;font-size:11px;margin-left:auto;">{len(_picks)} picks · avg conf {round(_avg_conf, 1)}%</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+                _hdr_col, _override_col = st.columns([3, 1])
+                with _hdr_col:
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
+                        f'<span style="font-weight:600;font-size:13px;">{_date}</span>'
+                        f'<span style="{_badge_style}padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;">{_badge_label}</span>'
+                        f'<span style="color:#555;font-size:11px;margin-left:auto;">{len(_picks)} picks · avg conf {round(_avg_conf, 1)}%</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                if _result == "pending":
+                    with _override_col:
+                        _ow, _ol = st.columns(2)
+                        if _ow.button("W", key=f"override_won_{_t['id']}", help="Mark as WON"):
+                            update_ticket_result(_t["id"], "won")
+                            st.rerun()
+                        if _ol.button("L", key=f"override_lost_{_t['id']}", help="Mark as LOST"):
+                            update_ticket_result(_t["id"], "lost")
+                            st.rerun()
                 _PICK_RESULT_STYLE = {
                     "won":     ("●", "#5dd65d"),
                     "lost":    ("●", "#f55d5d"),
