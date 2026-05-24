@@ -45,7 +45,7 @@ _ALL_STACK_TICKERS = tuple(
 
 _DEFAULT_STOCK_PORTFOLIO = [
     {
-        "ticker": "SEC0.AS",
+        "ticker": "SEC0.DE",
         "name": "iShares MSCI Global Semiconductors Acc",
         "qty": round(170 / 16.31, 4),
         "avg_price": 16.31,
