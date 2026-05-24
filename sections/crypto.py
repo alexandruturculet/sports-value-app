@@ -37,9 +37,19 @@ _PORTFOLIO = {
 _PORTFOLIO_IDS = tuple(_PORTFOLIO.keys())
 
 _NEWS_KEYWORDS = {m["symbol"].lower() for m in _PORTFOLIO.values()} | {
-    "render network", "fetch.ai", "artificial superintelligence",
-    "celestia", "pyth", "peaq", "aioz", "mavia", "prime",
-    "verasity", "cronos", "io.net",
+    # full names / common aliases for each holding
+    "render network", "render token",
+    "fetch.ai", "fetch ai", "artificial superintelligence alliance", "asa",
+    "celestia", "tia",
+    "pyth network", "pyth",
+    "peaq",
+    "aioz network", "aioz",
+    "heroes of mavia", "mavia",
+    "echelon prime", "prime",
+    "verasity", "vra",
+    "crypto.com", "cronos", "cro",
+    "io.net", "io net",
+    "spectral",
 }
 
 _SIG_STYLE = {
@@ -600,40 +610,30 @@ def render():
 
     # ── Crypto News ───────────────────────────────────────────────────────────
     st.markdown("### Crypto News")
+    st.caption("Filtered to your portfolio holdings only")
     with st.spinner("Loading headlines…"):
-        news = get_news(50)
+        news = get_news(100)
 
     if news:
         portfolio_news = [
             n for n in news
             if any(kw in n.get("title", "").lower() for kw in _NEWS_KEYWORDS)
         ]
-        general_news = [n for n in news if n not in portfolio_news]
-        display_news = portfolio_news[:8] + general_news[:4]
 
         if not portfolio_news:
-            st.caption("No portfolio-specific news found — showing general headlines.")
-
-        portfolio_set = set(id(n) for n in portfolio_news[:8])
-        for item in display_news:
-            title = item.get("title", "")
-            url = item.get("url", "")
-            source = item.get("source", "")
-            pub = item.get("published", "")[:16]
-            is_portfolio = id(item) in portfolio_set
-            badge = (
-                '<span style="background:#0d2b0d;color:#4caf50;font-size:8px;'
-                'padding:1px 5px;border-radius:3px;margin-right:6px;font-weight:700;">📌 Portfolio</span>'
-                if is_portfolio else ""
-            )
-            border_col = "#2ea043" if is_portfolio else "#333"
-            st.markdown(
-                f'<div style="border-left:3px solid {border_col};padding:8px 14px;margin-bottom:8px">'
-                f'{badge}'
-                f'<a href="{url}" target="_blank" style="color:#e0e0e0;text-decoration:none;'
-                f'font-weight:600;font-size:14px">{title}</a>'
-                f'<div style="color:#555;font-size:11px;margin-top:3px">{source} · {pub}</div></div>',
-                unsafe_allow_html=True,
-            )
+            st.info("No news about your holdings right now.")
+        else:
+            for item in portfolio_news[:12]:
+                title = item.get("title", "")
+                url = item.get("url", "")
+                source = item.get("source", "")
+                pub = item.get("published", "")[:16]
+                st.markdown(
+                    f'<div style="border-left:3px solid #2ea043;padding:8px 14px;margin-bottom:8px">'
+                    f'<a href="{url}" target="_blank" style="color:#e0e0e0;text-decoration:none;'
+                    f'font-weight:600;font-size:14px">{title}</a>'
+                    f'<div style="color:#555;font-size:11px;margin-top:3px">{source} · {pub}</div></div>',
+                    unsafe_allow_html=True,
+                )
     else:
         st.info("News unavailable.")
