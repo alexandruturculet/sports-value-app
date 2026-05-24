@@ -203,6 +203,57 @@ def delete_portfolio_coin(coin_id: str) -> bool:
         return False
 
 
+def get_stock_portfolio() -> list:
+    """Return all stock/ETF portfolio positions ordered by ticker."""
+    client = _get_client()
+    if not client:
+        return []
+    try:
+        resp = client.table("stock_portfolio").select("*").order("ticker").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error("Failed to fetch stock portfolio: %s", e)
+        return []
+
+
+def upsert_stock_position(
+    ticker: str, name: str, qty: float, avg_price: float, currency: str
+) -> bool:
+    """Insert or update a single stock/ETF position."""
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.table("stock_portfolio").upsert(
+            {
+                "ticker": ticker,
+                "name": name,
+                "qty": qty,
+                "avg_price": avg_price,
+                "currency": currency,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="ticker",
+        ).execute()
+        return True
+    except Exception as e:
+        logger.error("Failed to upsert stock position %s: %s", ticker, e)
+        return False
+
+
+def delete_stock_position(ticker: str) -> bool:
+    """Remove a stock/ETF position."""
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.table("stock_portfolio").delete().eq("ticker", ticker).execute()
+        return True
+    except Exception as e:
+        logger.error("Failed to delete stock position %s: %s", ticker, e)
+        return False
+
+
 def reset_evaluated_tickets_to_pending() -> int:
     """Reset all won/lost tickets back to pending so they can be re-evaluated.
     Returns the number of tickets reset."""
