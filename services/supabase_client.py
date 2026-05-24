@@ -81,6 +81,25 @@ def update_ticket_result(ticket_id: str, result: str) -> bool:
         return False
 
 
+def update_ticket_picks_and_result(ticket_id: str, picks: list, result: str) -> bool:
+    """Update both the picks array (with per-pick results) and the ticket result."""
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.table("tickets").update(
+            {
+                "picks": picks,
+                "result": result,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("id", ticket_id).execute()
+        return True
+    except Exception as e:
+        logger.error("Failed to update ticket picks and result: %s", e)
+        return False
+
+
 def get_motivation(fixture_id: int) -> dict | None:
     """Fetch cached motivation analysis for a fixture, or None if absent."""
     client = _get_client()

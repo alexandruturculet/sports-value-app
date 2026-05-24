@@ -17,7 +17,7 @@ from models.v7.match_preview import generate_preview
 from services.player_images import get_player_image_url
 from services.api_football import get_fixture_injuries, get_team_season_stats, is_api_rate_limited
 from services.espn_api import get_espn_lineups, get_espn_last_lineup, get_espn_injuries
-from services.supabase_client import save_ticket, get_all_tickets, update_ticket_result, get_motivation, save_motivation
+from services.supabase_client import save_ticket, get_all_tickets, update_ticket_result, update_ticket_picks_and_result, get_motivation, save_motivation
 from models.v7.motivation_engine import analyze_motivation
 from models.data_normalizer import normalize_league, register_team_stats
 from models.team_strength_model import get_team_strength
@@ -890,39 +890,67 @@ def _sports_display() -> None:
         return False
 
 
-    def _auto_evaluate_pending_tickets(today_str: str) -> None:
-        """Check all past pending tickets and auto-mark won/lost. Runs once per session."""
+    def _auto_evaluate_pending_tickets() -> None:
+        """Evaluate each pick individually and derive ticket status from pick results.
+
+        Per-pick result: 'won', 'lost', or 'pending' (match not yet finished).
+        Ticket result:
+          - 'lost'    if any pick is 'lost' (fail-fast, even if other picks still pending)
+          - 'won'     if all picks are 'won'
+          - 'pending' otherwise
+        """
         for ticket in get_all_tickets():
-            if ticket["result"] != "pending":
-                continue
-            if ticket["date"] >= today_str:
-                continue  # today's ticket — wait until tomorrow
+            if ticket["result"] not in ("pending", "won"):
+                continue  # already lost, nothing to update
             picks = ticket.get("picks", [])
             if not picks:
                 continue
-            outcomes = []
-            all_finished = True
-            for pick in picks:
+
+            updated_picks = [dict(p) for p in picks]
+            changed = False
+
+            for pick in updated_picks:
+                if pick.get("result") in ("won", "lost"):
+                    continue  # already resolved, skip API call
                 fid = pick.get("fixture_id")
                 if not fid:
-                    all_finished = False
-                    break
+                    pick["result"] = "pending"
+                    continue
                 score = _fetch_match_score(int(fid))
                 if score is None:
-                    all_finished = False
-                    break
-                outcomes.append(_pick_won(pick["prediction"], score[0], score[1]))
-            if all_finished and outcomes:
-                update_ticket_result(ticket["id"], "won" if all(outcomes) else "lost")
+                    pick["result"] = "pending"
+                else:
+                    pick["result"] = "won" if _pick_won(pick["prediction"], score[0], score[1]) else "lost"
+                    changed = True
+
+            pick_results = [p.get("result", "pending") for p in updated_picks]
+            if "lost" in pick_results:
+                new_ticket_result = "lost"
+            elif all(r == "won" for r in pick_results):
+                new_ticket_result = "won"
+            else:
+                new_ticket_result = "pending"
+
+            if changed or new_ticket_result != ticket["result"]:
+                update_ticket_picks_and_result(ticket["id"], updated_picks, new_ticket_result)
 
 
     # Run evaluation once per session (not on every rerender)
     if not st.session_state.get("_tickets_evaluated"):
-        _auto_evaluate_pending_tickets(today_local.isoformat())
+        _auto_evaluate_pending_tickets()
         st.session_state["_tickets_evaluated"] = True
 
-    st.header("Ticket History")
-    st.caption("Results are evaluated automatically once all matches in a ticket finish")
+    _col_title, _col_refresh = st.columns([6, 1])
+    with _col_title:
+        st.header("Ticket History")
+        st.caption("Results are evaluated per match — ticket is lost as soon as any pick loses")
+    with _col_refresh:
+        st.write("")
+        if st.button("↺ Refresh", key="refresh_ticket_results"):
+            st.session_state["_tickets_evaluated"] = False
+            _auto_evaluate_pending_tickets()
+            st.session_state["_tickets_evaluated"] = True
+            st.rerun()
 
     _tickets = get_all_tickets()
 
@@ -997,13 +1025,21 @@ def _sports_display() -> None:
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+                _PICK_RESULT_STYLE = {
+                    "won":     ("●", "#5dd65d"),
+                    "lost":    ("●", "#f55d5d"),
+                    "pending": ("●", "#555"),
+                }
                 for _p in _picks:
                     _ppred = _p["prediction"]
                     _ppb, _ppf = _PRED_STYLE.get(_ppred, ("#333", "#fff"))
                     _pev = round(_p.get("ev", 0), 3)
                     _pev_col = "#4caf50" if _pev > 0 else "#f44336"
+                    _pr = _p.get("result", "pending")
+                    _pr_dot, _pr_col = _PICK_RESULT_STYLE.get(_pr, ("●", "#555"))
                     st.markdown(
                         f'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
+                        f'<span style="color:{_pr_col};font-size:10px;">{_pr_dot}</span>'
                         f'<span style="font-size:12px;font-weight:600;flex:1;">{_p["match"]}</span>'
                         f'<span style="background:{_ppb};color:{_ppf};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;">{_ppred}</span>'
                         f'<span style="font-size:11px;color:{_pev_col};font-weight:600;">EV {_pev:+.3f}</span>'
