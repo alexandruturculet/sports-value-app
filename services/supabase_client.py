@@ -146,6 +146,63 @@ def save_motivation(fixture_id: int, home: str, away: str, analysis: dict) -> bo
         return False
 
 
+def get_portfolio() -> list:
+    """Return all portfolio coins ordered by coin_id."""
+    client = _get_client()
+    if not client:
+        return []
+    try:
+        resp = client.table("portfolio").select("*").order("coin_id").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error("Failed to fetch portfolio: %s", e)
+        return []
+
+
+def upsert_portfolio_coin(
+    coin_id: str,
+    symbol: str,
+    qty: float,
+    staking_apy: float | None,
+    staked: bool,
+    tv_symbol: str | None,
+) -> bool:
+    """Insert or update a single portfolio coin."""
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.table("portfolio").upsert(
+            {
+                "coin_id": coin_id,
+                "symbol": symbol,
+                "qty": qty,
+                "staking_apy": staking_apy,
+                "staked": staked,
+                "tv_symbol": tv_symbol,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="coin_id",
+        ).execute()
+        return True
+    except Exception as e:
+        logger.error("Failed to upsert portfolio coin %s: %s", coin_id, e)
+        return False
+
+
+def delete_portfolio_coin(coin_id: str) -> bool:
+    """Remove a coin from the portfolio."""
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.table("portfolio").delete().eq("coin_id", coin_id).execute()
+        return True
+    except Exception as e:
+        logger.error("Failed to delete portfolio coin %s: %s", coin_id, e)
+        return False
+
+
 def reset_evaluated_tickets_to_pending() -> int:
     """Reset all won/lost tickets back to pending so they can be re-evaluated.
     Returns the number of tickets reset."""

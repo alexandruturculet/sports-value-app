@@ -3,6 +3,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from services.coingecko import get_market_overview, get_top_coins, get_fear_greed, get_fear_greed_history
 from services.cryptopanic import get_news
+from services.supabase_client import get_portfolio, upsert_portfolio_coin, delete_portfolio_coin
 
 # ── Personal watchlist (CoinGecko IDs) ───────────────────────────────────────
 _WATCHLIST_IDS = (
@@ -18,8 +19,8 @@ _WATCHLIST_IDS = (
 
 _WATCHLIST_ID_SET = set(_WATCHLIST_IDS)
 
-# ── Portfolio holdings ────────────────────────────────────────────────────────
-_PORTFOLIO = {
+# ── Default portfolio (used to seed DB on first run) ─────────────────────────
+_DEFAULT_PORTFOLIO = {
     "render-token":     {"qty": 877.33,  "symbol": "RENDER"},
     "fetch-ai":         {"qty": 3110.19, "symbol": "FET",   "staking_apy": 4.60},
     "peaq-2":           {"qty": 15220,   "symbol": "PEAQ"},
@@ -34,10 +35,23 @@ _PORTFOLIO = {
     "crypto-com-chain": {"qty": 30,      "symbol": "CRO"},
 }
 
-_PORTFOLIO_IDS = tuple(_PORTFOLIO.keys())
+_DEFAULT_TV_SYMBOLS = {
+    "render-token":     "BINANCE:RENDERUSDT",
+    "fetch-ai":         "BINANCE:FETUSDT",
+    "peaq-2":           "KUCOIN:PEAQUSDT",
+    "aioz-network":     "BINANCE:AIOZUSDT",
+    "celestia":         "BINANCE:TIAUSDT",
+    "spectral":         "MEXC:SPECUSDT",
+    "pyth-network":     "BINANCE:PYTHUSDT",
+    "io":               "BYBIT:IOUSDT",
+    "heroes-of-mavia":  "BINANCE:MAVIAUSDT",
+    "echelon-prime":    "COINBASE:PRIMEUSDT",
+    "verasity":         "KUCOIN:VRAUSDT",
+    "crypto-com-chain": "KRAKEN:CROUSD",
+}
 
-_NEWS_KEYWORDS = {m["symbol"].lower() for m in _PORTFOLIO.values()} | {
-    # full names / common aliases for each holding
+# Extra name/alias keywords for news filtering (beyond ticker symbols)
+_EXTRA_NEWS_KEYWORDS = {
     "render network", "render token",
     "fetch.ai", "fetch ai", "artificial superintelligence alliance", "asa",
     "celestia", "tia",
@@ -60,22 +74,6 @@ _SIG_STYLE = {
     "STRONG SELL": ("#1f0d0d", "#b71c1c", "▼▼"),
 }
 _SIG_ORDER = {"STRONG BUY": 0, "BUY": 1, "HOLD": 2, "SELL": 3, "STRONG SELL": 4}
-
-# ── TradingView symbol map ────────────────────────────────────────────────────
-_TV_SYMBOLS = {
-    "render-token":     "BINANCE:RENDERUSDT",
-    "fetch-ai":         "BINANCE:FETUSDT",
-    "peaq-2":           "KUCOIN:PEAQUSDT",
-    "aioz-network":     "BINANCE:AIOZUSDT",
-    "celestia":         "BINANCE:TIAUSDT",
-    "spectral":         "MEXC:SPECUSDT",
-    "pyth-network":     "BINANCE:PYTHUSDT",
-    "io":               "BYBIT:IOUSDT",
-    "heroes-of-mavia":  "BINANCE:MAVIAUSDT",
-    "echelon-prime":    "COINBASE:PRIMEUSDT",
-    "verasity":         "KUCOIN:VRAUSDT",
-    "crypto-com-chain": "KRAKEN:CROUSD",
-}
 
 _FNG_RANGES = [
     (range(0, 26),   "Extreme Fear",  "#f44336"),
@@ -125,13 +123,13 @@ def _sparkline_svg(prices: list, width: int = 80, height: int = 28) -> str:
     )
 
 
-def _render_portfolio_rows(rows: list, total_value: float) -> None:
-    tv_safe = {cid.replace("-", "_"): sym for cid, sym in _TV_SYMBOLS.items()}
+def _render_portfolio_rows(rows: list, total_value: float, portfolio: dict, tv_symbols: dict) -> None:
+    tv_safe = {cid.replace("-", "_"): sym for cid, sym in tv_symbols.items()}
     cards_html = ""
     for coin_id, cd, _ in rows:
         sparkline_prices = (cd.get("sparkline_in_7d") or {}).get("price") or [] if cd else []
-        cards_html += _portfolio_row(coin_id, cd, total_value, sparkline_prices)
-        if coin_id in _TV_SYMBOLS:
+        cards_html += _portfolio_row(coin_id, cd, total_value, portfolio, sparkline_prices)
+        if coin_id in tv_symbols:
             safe_id = coin_id.replace("-", "_")
             cards_html += (
                 f'<div id="chart_{safe_id}" style="display:none;margin-bottom:6px;">'
@@ -177,13 +175,13 @@ _PIE_COLORS = [
 ]
 
 
-def _render_allocation_pie(rows: list, total_value: float) -> None:
+def _render_allocation_pie(rows: list, total_value: float, portfolio: dict) -> None:
     import plotly.graph_objects as go
 
     labels, values, colors = [], [], []
     for i, (coin_id, cd, value) in enumerate(rows):
         if value > 0:
-            labels.append(_PORTFOLIO[coin_id]["symbol"])
+            labels.append(portfolio[coin_id]["symbol"])
             values.append(round(value, 2))
             colors.append(_PIE_COLORS[i % len(_PIE_COLORS)])
 
@@ -292,8 +290,8 @@ def _locked_pct(coin: dict) -> str:
     return f'<span style="color:{color}">{locked:.1f}%</span>'
 
 
-def _portfolio_row(coin_id: str, coin_data: dict | None, total_value: float, sparkline_prices: list = None) -> str:
-    meta = _PORTFOLIO[coin_id]
+def _portfolio_row(coin_id: str, coin_data: dict | None, total_value: float, portfolio: dict, sparkline_prices: list = None) -> str:
+    meta = portfolio[coin_id]
     qty = meta["qty"]
     symbol = meta["symbol"]
     staking_apy = meta.get("staking_apy")
@@ -426,13 +424,121 @@ def _discovery_card(coin: dict) -> str:
     )
 
 
+def _load_portfolio() -> tuple[dict, dict]:
+    """Load portfolio from DB. Returns (portfolio_dict, tv_symbols_dict).
+    Falls back to hardcoded defaults if DB is unavailable."""
+    db_rows = get_portfolio()
+
+    if not db_rows:
+        # Seed DB from hardcoded defaults on first run
+        seeded = all(
+            upsert_portfolio_coin(
+                coin_id=cid,
+                symbol=meta["symbol"],
+                qty=meta["qty"],
+                staking_apy=meta.get("staking_apy"),
+                staked=meta.get("staked", False),
+                tv_symbol=_DEFAULT_TV_SYMBOLS.get(cid),
+            )
+            for cid, meta in _DEFAULT_PORTFOLIO.items()
+        )
+        if seeded:
+            db_rows = get_portfolio()
+
+    if not db_rows:
+        # DB unavailable — use hardcoded defaults in-memory
+        return (
+            {cid: dict(meta) for cid, meta in _DEFAULT_PORTFOLIO.items()},
+            dict(_DEFAULT_TV_SYMBOLS),
+        )
+
+    portfolio = {}
+    tv_symbols = {}
+    for row in db_rows:
+        cid = row["coin_id"]
+        portfolio[cid] = {"symbol": row["symbol"], "qty": float(row["qty"])}
+        if row.get("staking_apy"):
+            portfolio[cid]["staking_apy"] = float(row["staking_apy"])
+        if row.get("staked"):
+            portfolio[cid]["staked"] = bool(row["staked"])
+        if row.get("tv_symbol"):
+            tv_symbols[cid] = row["tv_symbol"]
+
+    return portfolio, tv_symbols
+
+
+def _render_portfolio_editor(portfolio: dict, tv_symbols: dict) -> None:
+    """Inline data editor for portfolio holdings."""
+    import pandas as pd
+
+    with st.expander("✏️ Edit Portfolio", expanded=False):
+        df = pd.DataFrame([
+            {
+                "coin_id":     cid,
+                "symbol":      meta["symbol"],
+                "qty":         float(meta["qty"]),
+                "staking_apy": float(meta.get("staking_apy") or 0),
+                "staked":      bool(meta.get("staked", False)),
+                "tv_symbol":   tv_symbols.get(cid, ""),
+            }
+            for cid, meta in portfolio.items()
+        ]) if portfolio else pd.DataFrame(
+            columns=["coin_id", "symbol", "qty", "staking_apy", "staked", "tv_symbol"]
+        )
+
+        edited = st.data_editor(
+            df,
+            num_rows="dynamic",
+            column_config={
+                "coin_id":     st.column_config.TextColumn("CoinGecko ID", required=True, width="medium"),
+                "symbol":      st.column_config.TextColumn("Symbol", required=True, width="small"),
+                "qty":         st.column_config.NumberColumn("Qty", min_value=0, format="%.4f", width="small"),
+                "staking_apy": st.column_config.NumberColumn("Staking APY %", min_value=0, max_value=100, format="%.2f", width="small"),
+                "staked":      st.column_config.CheckboxColumn("Staked", width="small"),
+                "tv_symbol":   st.column_config.TextColumn("TradingView Symbol (e.g. BINANCE:RENDERUSDT)", width="large"),
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="portfolio_editor",
+        )
+
+        if st.button("💾 Save Portfolio", key="save_portfolio"):
+            old_ids = set(portfolio.keys())
+            saved_ids = set()
+
+            for _, row in edited.iterrows():
+                cid = str(row.get("coin_id") or "").strip()
+                sym = str(row.get("symbol") or "").strip().upper()
+                if not cid or not sym:
+                    continue
+                qty = float(row.get("qty") or 0)
+                apy = float(row.get("staking_apy") or 0) or None
+                staked = bool(row.get("staked", False))
+                tv = str(row.get("tv_symbol") or "").strip() or None
+                upsert_portfolio_coin(cid, sym, qty, apy, staked, tv)
+                saved_ids.add(cid)
+
+            for removed_id in old_ids - saved_ids:
+                delete_portfolio_coin(removed_id)
+
+            st.success(f"Saved {len(saved_ids)} coins.")
+            st.rerun()
+
+
 def render():
     st.markdown("## ₿ Crypto Dashboard")
 
+    # ── Load portfolio from DB ─────────────────────────────────────────────────
+    portfolio, tv_symbols = _load_portfolio()
+    portfolio_ids = tuple(portfolio.keys())
+    news_keywords = {meta["symbol"].lower() for meta in portfolio.values()} | _EXTRA_NEWS_KEYWORDS
+
     # ── Portfolio ──────────────────────────────────────────────────────────────
     st.markdown("### My Portfolio")
+    _render_portfolio_editor(portfolio, tv_symbols)
+
     with st.spinner("Loading portfolio…"):
-        portfolio_coins = get_market_overview(_PORTFOLIO_IDS, include_sparkline=True)
+        portfolio_coins = get_market_overview(portfolio_ids, include_sparkline=True)
 
     if portfolio_coins:
         lookup = {c["id"]: c for c in portfolio_coins}
@@ -442,7 +548,7 @@ def render():
         total_24h_pnl = 0.0
         perfs = []
 
-        for coin_id, meta in _PORTFOLIO.items():
+        for coin_id, meta in portfolio.items():
             cd = lookup.get(coin_id)
             price = (cd.get("current_price") or 0) if cd else 0
             p24 = (cd.get("price_change_percentage_24h_in_currency") or 0) if cd else 0
@@ -474,7 +580,7 @@ def render():
         div_score = round((1 - hhi) * 100)
         div_color = "#f44336" if div_score < 40 else "#ff9800" if div_score < 65 else "#4caf50"
         concentrated = [
-            (_PORTFOLIO[cid]["symbol"], v / total_value * 100)
+            (portfolio[cid]["symbol"], v / total_value * 100)
             for cid, _, v in rows if total_value > 0 and v / total_value > 0.30
         ]
         div_html = (
@@ -539,8 +645,8 @@ def render():
         )
         rows.sort(key=_SORT_KEY[sort_by], reverse=True)
 
-        _render_allocation_pie(rows, total_value)
-        _render_portfolio_rows(rows, total_value)
+        _render_allocation_pie(rows, total_value, portfolio)
+        _render_portfolio_rows(rows, total_value, portfolio, tv_symbols)
     else:
         st.info("Portfolio data unavailable — CoinGecko may be rate-limited. Try again in a moment.")
 
@@ -617,7 +723,7 @@ def render():
     if news:
         portfolio_news = [
             n for n in news
-            if any(kw in n.get("title", "").lower() for kw in _NEWS_KEYWORDS)
+            if any(kw in n.get("title", "").lower() for kw in news_keywords)
         ]
 
         if not portfolio_news:
