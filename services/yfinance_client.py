@@ -97,6 +97,23 @@ def get_signals(tickers: tuple) -> dict:
     return result
 
 
+@st.cache_data(ttl=600)
+def get_sparklines(tickers: tuple) -> dict:
+    """7-day daily close prices per ticker for sparkline display."""
+    yf = _import_yf()
+    if not yf:
+        return {}
+    result = {}
+    for ticker in tickers:
+        try:
+            hist = yf.Ticker(ticker).history(period="7d")
+            if not hist.empty:
+                result[ticker] = hist["Close"].tolist()
+        except Exception as e:
+            logger.warning("Sparkline failed for %s: %s", ticker, e)
+    return result
+
+
 @st.cache_data(ttl=900)
 def get_sector_performance(tickers: tuple) -> dict:
     """1-week % change for sector ETFs."""

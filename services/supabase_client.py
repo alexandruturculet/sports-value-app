@@ -217,7 +217,8 @@ def get_stock_portfolio() -> list:
 
 
 def upsert_stock_position(
-    ticker: str, name: str, qty: float, avg_price: float, currency: str
+    ticker: str, name: str, qty: float, avg_price: float, currency: str,
+    tv_symbol: str | None = None,
 ) -> bool:
     """Insert or update a single stock/ETF position."""
     client = _get_client()
@@ -231,6 +232,7 @@ def upsert_stock_position(
                 "qty": qty,
                 "avg_price": avg_price,
                 "currency": currency,
+                "tv_symbol": tv_symbol,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
             on_conflict="ticker",

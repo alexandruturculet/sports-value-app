@@ -1,8 +1,10 @@
+import json
 import xml.etree.ElementTree as ET
 import logging
 import requests
 import streamlit as st
-from services.yfinance_client import get_quotes, get_signals, get_sector_performance
+import streamlit.components.v1 as components
+from services.yfinance_client import get_quotes, get_signals, get_sector_performance, get_sparklines
 from services.supabase_client import get_stock_portfolio, upsert_stock_position, delete_stock_position
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,7 @@ _DEFAULT_STOCK_PORTFOLIO = [
         "qty": round(170 / 16.31, 4),
         "avg_price": 16.31,
         "currency": "EUR",
+        "tv_symbol": "XETR:SEC0",
     },
 ]
 
@@ -90,6 +93,34 @@ def _chg_badge(pct: float) -> str:
     return f'<span style="color:{color};font-weight:600">{arrow} {abs(pct):.2f}%</span>'
 
 
+def _sparkline_svg(prices: list, width: int = 80, height: int = 28) -> str:
+    if not prices or len(prices) < 2:
+        return f'<div style="width:{width}px;height:{height}px;flex-shrink:0;"></div>'
+    mn, mx = min(prices), max(prices)
+    if mn == mx:
+        return f'<div style="width:{width}px;height:{height}px;flex-shrink:0;"></div>'
+    pad = 2
+    n = len(prices)
+    x_step = (width - pad * 2) / (n - 1)
+    pts = []
+    for i, p in enumerate(prices):
+        x = round(pad + i * x_step, 1)
+        y = round(height - pad - (p - mn) / (mx - mn) * (height - pad * 2), 1)
+        pts.append(f"{x},{y}")
+    color = "#2ea043" if prices[-1] >= prices[0] else "#da3633"
+    return (
+        f'<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" '
+        f'style="flex-shrink:0;overflow:visible;">'
+        f'<polyline points="{" ".join(pts)}" fill="none" stroke="{color}" '
+        f'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+        f'stroke-dasharray="1000" stroke-dashoffset="1000">'
+        f'<animate attributeName="stroke-dashoffset" from="1000" to="0" dur="1.2s" '
+        f'fill="freeze" calcMode="spline" keySplines="0.4 0 0.2 1" keyTimes="0;1"/>'
+        f'</polyline>'
+        f'</svg>'
+    )
+
+
 def _load_stock_portfolio() -> list:
     db_rows = get_stock_portfolio()
 
@@ -101,6 +132,7 @@ def _load_stock_portfolio() -> list:
                 qty=p["qty"],
                 avg_price=p["avg_price"],
                 currency=p["currency"],
+                tv_symbol=p.get("tv_symbol"),
             )
             for p in _DEFAULT_STOCK_PORTFOLIO
         )
@@ -117,6 +149,7 @@ def _load_stock_portfolio() -> list:
             "qty": float(row["qty"]),
             "avg_price": float(row["avg_price"]),
             "currency": row.get("currency") or "USD",
+            "tv_symbol": row.get("tv_symbol") or "",
         }
         for row in db_rows
     ]
@@ -127,7 +160,7 @@ def _render_stock_portfolio_editor(positions: list) -> None:
 
     with st.expander("✏️ Edit Portfolio", expanded=False):
         df = pd.DataFrame(positions) if positions else pd.DataFrame(
-            columns=["ticker", "name", "qty", "avg_price", "currency"]
+            columns=["ticker", "name", "qty", "avg_price", "currency", "tv_symbol"]
         )
 
         edited = st.data_editor(
@@ -135,11 +168,12 @@ def _render_stock_portfolio_editor(positions: list) -> None:
             num_rows="dynamic",
             column_config={
                 "ticker":    st.column_config.TextColumn("Ticker (yfinance)", required=True, width="small",
-                             help="Use exchange suffix for non-US: e.g. SECO.AS, SECO.PA, SECO.L"),
+                             help="Use exchange suffix for non-US: e.g. SEC0.DE, SECO.AS"),
                 "name":      st.column_config.TextColumn("Name", width="large"),
                 "qty":       st.column_config.NumberColumn("Qty", min_value=0, format="%.4f", width="small"),
                 "avg_price": st.column_config.NumberColumn("Avg Price", min_value=0, format="%.4f", width="small"),
                 "currency":  st.column_config.SelectboxColumn("Currency", options=["USD", "EUR", "GBP"], width="small"),
+                "tv_symbol": st.column_config.TextColumn("TradingView Symbol (e.g. XETR:SEC0, NASDAQ:NVDA)", width="large"),
             },
             hide_index=True,
             use_container_width=True,
@@ -158,7 +192,8 @@ def _render_stock_portfolio_editor(positions: list) -> None:
                 qty = float(row.get("qty") or 0)
                 avg_price = float(row.get("avg_price") or 0)
                 currency = str(row.get("currency") or "USD").strip()
-                upsert_stock_position(ticker, name, qty, avg_price, currency)
+                tv_symbol = str(row.get("tv_symbol") or "").strip() or None
+                upsert_stock_position(ticker, name, qty, avg_price, currency, tv_symbol)
                 saved_tickers.add(ticker)
 
             for removed in old_tickers - saved_tickers:
@@ -168,7 +203,75 @@ def _render_stock_portfolio_editor(positions: list) -> None:
             st.rerun()
 
 
-def _render_stock_portfolio(positions: list, quotes: dict) -> None:
+def _stock_portfolio_card(
+    pos: dict, q: dict | None, total_invested_by_cur: dict,
+    sparkline_prices: list, safe_id: str,
+) -> str:
+    ticker = pos["ticker"]
+    name = pos.get("name") or ticker
+    qty = pos["qty"]
+    avg_price = pos["avg_price"]
+    currency = pos.get("currency", "USD")
+    invested = qty * avg_price
+
+    current_price = q["price"] if q else None
+    change_pct = q["change_pct"] if q else None
+    current_value = qty * current_price if current_price else None
+
+    pnl = current_value - invested if current_value is not None else None
+    pnl_pct = pnl / invested * 100 if pnl is not None and invested > 0 else None
+
+    cur_sym = {"EUR": "€", "GBP": "£"}.get(currency, "$")
+    p24_val = change_pct or 0
+    border_col = "#2ea043" if p24_val > 0 else "#da3633" if p24_val < 0 else "#1e2535"
+    pnl_color = "#34D399" if (pnl or 0) >= 0 else "#F87171"
+    chg_color = "#34D399" if p24_val >= 0 else "#F87171"
+
+    price_str = f"{cur_sym}{current_price:,.4f}" if current_price else "—"
+    value_str = f"{cur_sym}{current_value:,.2f}" if current_value else "—"
+    invested_str = f"{cur_sym}{invested:,.2f}"
+
+    if pnl is not None and pnl_pct is not None:
+        pnl_sign = "+" if pnl >= 0 else ""
+        pnl_display = f"{pnl_sign}{cur_sym}{abs(pnl):.2f} ({pnl_sign}{pnl_pct:.1f}%)"
+    else:
+        pnl_display = "—"
+
+    chg_str = (
+        f"{'▲' if p24_val >= 0 else '▼'} {abs(change_pct):.2f}%"
+    ) if change_pct is not None else "—"
+
+    bar_pct = min(invested / (total_invested_by_cur.get(currency) or 1) * 100, 100)
+    spark = _sparkline_svg(sparkline_prices)
+
+    return (
+        f'<div style="background:#0a0a0a;border:1px solid #1c1c1c;border-left:3px solid {border_col};'
+        f'border-radius:8px;padding:11px 14px;margin-bottom:5px;">'
+        f'<div style="display:flex;align-items:center;gap:12px;">'
+        f'<div style="flex:1;min-width:0;">'
+        f'<div style="font-size:13px;font-weight:700;color:#f1f5f9;">{ticker}</div>'
+        f'<div style="color:#4a4a4a;font-size:10px;margin-top:2px;">{name}</div>'
+        f'<div style="color:#4a4a4a;font-size:10px;">{qty:,.4f} units · {currency}</div>'
+        f'</div>'
+        f'<div data-chart-id="{safe_id}" title="Click to open TradingView chart" style="flex-shrink:0;cursor:pointer;">{spark}</div>'
+        f'<div style="text-align:center;flex-shrink:0;min-width:76px;">'
+        f'<div style="font-size:11px;color:#666;margin-bottom:2px;">{price_str}</div>'
+        f'<div style="font-size:10px;color:{chg_color};font-weight:600;">{chg_str}</div>'
+        f'</div>'
+        f'<div style="text-align:right;flex-shrink:0;min-width:110px;">'
+        f'<div style="font-weight:700;font-size:13px;color:#f1f5f9;">{value_str}</div>'
+        f'<div style="font-size:10px;color:{pnl_color};margin-top:2px;">{pnl_display}</div>'
+        f'<div style="font-size:9px;color:#3a3a3a;margin-top:1px;">inv: {invested_str}</div>'
+        f'</div>'
+        f'</div>'
+        f'<div style="margin-top:8px;height:2px;background:#1a1a1a;border-radius:1px;">'
+        f'<div style="height:2px;width:{bar_pct:.1f}%;background:#818CF8;border-radius:1px;"></div>'
+        f'</div>'
+        f'</div>'
+    )
+
+
+def _render_stock_portfolio(positions: list, quotes: dict, sparklines: dict) -> None:
     if not positions:
         return
 
@@ -177,65 +280,56 @@ def _render_stock_portfolio(positions: list, quotes: dict) -> None:
         cur = p.get("currency", "USD")
         total_invested_by_cur[cur] = total_invested_by_cur.get(cur, 0) + p["qty"] * p["avg_price"]
 
+    tv_safe = {
+        p["ticker"].replace(".", "_").replace("-", "_"): p["tv_symbol"]
+        for p in positions if p.get("tv_symbol")
+    }
+
+    cards_html = ""
     for pos in positions:
         ticker = pos["ticker"]
-        name = pos.get("name") or ticker
-        qty = pos["qty"]
-        avg_price = pos["avg_price"]
-        currency = pos.get("currency", "USD")
-        invested = qty * avg_price
-
-        q = quotes.get(ticker)
-        current_price = q["price"] if q else None
-        change_pct = q["change_pct"] if q else None
-        current_value = qty * current_price if current_price else None
-
-        pnl = current_value - invested if current_value is not None else None
-        pnl_pct = pnl / invested * 100 if pnl is not None and invested > 0 else None
-
-        cur_sym = {"EUR": "€", "GBP": "£"}.get(currency, "$")
-        pnl_color = "#34D399" if (pnl or 0) >= 0 else "#F87171"
-        chg_color = "#34D399" if (change_pct or 0) >= 0 else "#F87171"
-
-        price_str = f"{cur_sym}{current_price:,.4f}" if current_price else "—"
-        value_str = f"{cur_sym}{current_value:,.2f}" if current_value else "—"
-        invested_str = f"{cur_sym}{invested:,.2f}"
-
-        if pnl is not None and pnl_pct is not None:
-            pnl_sign = "+" if pnl >= 0 else ""
-            pnl_str = f"{pnl_sign}{cur_sym}{abs(pnl):.2f} ({pnl_sign}{pnl_pct:.1f}%)"
-        else:
-            pnl_str = "Price unavailable"
-
-        chg_str = (
-            f"{'▲' if (change_pct or 0) >= 0 else '▼'} {abs(change_pct):.2f}% today"
-        ) if change_pct is not None else ""
-
-        bar_pct = min(invested / (total_invested_by_cur.get(currency) or 1) * 100, 100)
-
-        st.markdown(
-            f'<div style="background:#0a0d14;border:1px solid #1e2535;border-left:3px solid #818CF8;'
-            f'border-radius:8px;padding:14px 16px;margin-bottom:8px;">'
-            f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">'
-            f'<div>'
-            f'<span style="font-size:15px;font-weight:800;color:#f1f5f9;">{ticker}</span>'
-            f'<span style="font-size:10px;color:#475569;margin-left:8px;">{name}</span>'
-            f'<div style="font-size:10px;color:#475569;margin-top:2px;">{qty:,.4f} units · {currency}</div>'
-            f'</div>'
-            f'<div style="text-align:right;">'
-            f'<div style="font-size:16px;font-weight:800;color:#f1f5f9;">{value_str}</div>'
-            f'<div style="font-size:10px;color:{chg_color};margin-top:2px;">{chg_str}</div>'
-            f'</div>'
-            f'</div>'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
-            f'<div style="font-size:11px;color:#94a3b8;">Invested: <b>{invested_str}</b> @ {cur_sym}{avg_price:.4f}</div>'
-            f'<div style="font-size:12px;color:{pnl_color};font-weight:700;">{pnl_str}</div>'
-            f'</div>'
-            f'<div style="height:2px;background:#1a2030;border-radius:1px;">'
-            f'<div style="height:2px;width:{bar_pct:.1f}%;background:#818CF8;border-radius:1px;"></div>'
-            f'</div></div>',
-            unsafe_allow_html=True,
+        safe_id = ticker.replace(".", "_").replace("-", "_")
+        sparkline_prices = sparklines.get(ticker, [])
+        cards_html += _stock_portfolio_card(
+            pos, quotes.get(ticker), total_invested_by_cur, sparkline_prices, safe_id
         )
+        if pos.get("tv_symbol"):
+            cards_html += (
+                f'<div id="chart_{safe_id}" style="display:none;margin-bottom:6px;">'
+                f'<div id="tv_{safe_id}" style="height:440px;"></div>'
+                f'</div>'
+            )
+
+    tv_json = json.dumps(tv_safe)
+    html = f"""<!DOCTYPE html><html><head>
+<style>
+  body{{background:#0d1117;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e0e0e0;}}
+  [data-chart-id]{{cursor:pointer;}}
+  [data-chart-id]:hover svg polyline{{opacity:0.75;}}
+</style></head><body>
+{cards_html}
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+var TV={tv_json},loaded={{}},active=null;
+document.addEventListener('click',function(e){{
+  var el=e.target.closest('[data-chart-id]');
+  if(!el)return;
+  toggleChart(el.dataset.chartId);
+}});
+function toggleChart(id){{
+  var c=document.getElementById('chart_'+id);
+  if(!c)return;
+  if(active&&active!==id){{var p=document.getElementById('chart_'+active);if(p)p.style.display='none';}}
+  if(c.style.display==='none'){{
+    c.style.display='block';active=id;
+    if(!loaded[id]&&TV[id]){{
+      new TradingView.widget({{width:'100%',height:440,symbol:TV[id],interval:'D',timezone:'Europe/Bucharest',theme:'dark',style:'1',locale:'en',allow_symbol_change:true,container_id:'tv_'+id}});
+      loaded[id]=true;
+    }}
+  }}else{{c.style.display='none';active=null;}}
+}}
+</script></body></html>"""
+    components.html(html, height=len(positions) * 80 + 460, scrolling=False)
 
 
 def _render_data_center_stack(signals: dict, quotes: dict) -> None:
@@ -290,7 +384,8 @@ def render():
         portfolio_tickers = tuple(p["ticker"] for p in positions)
         with st.spinner("Loading portfolio prices…"):
             portfolio_quotes = get_quotes(portfolio_tickers)
-        _render_stock_portfolio(positions, portfolio_quotes)
+            portfolio_sparklines = get_sparklines(portfolio_tickers)
+        _render_stock_portfolio(positions, portfolio_quotes, portfolio_sparklines)
 
     st.divider()
 
