@@ -19,6 +19,7 @@ def build_ticket(results, min_ev=0.0, min_conf=0):
             "kelly": p.get("edge", {}).get("kelly", 0),
             "confidence": p.get("confidence", 0),
             "fixture_id": p.get("fixture_id"),
+            "odds": p.get("edge", {}).get("odds"),
         }
         for p in picks
     ]

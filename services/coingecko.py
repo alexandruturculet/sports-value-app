@@ -70,6 +70,21 @@ def get_trending() -> list:
     return data.get("coins", []) if isinstance(data, dict) else []
 
 
+@st.cache_data(ttl=600)
+def get_global() -> dict:
+    """Global crypto market stats: BTC dominance, total market cap, 24h change."""
+    data = _get(f"{_CG_BASE}/global")
+    if isinstance(data, dict) and isinstance(data.get("data"), dict):
+        d = data["data"]
+        return {
+            "btc_dominance": d.get("market_cap_percentage", {}).get("btc"),
+            "eth_dominance": d.get("market_cap_percentage", {}).get("eth"),
+            "total_mcap_usd": d.get("total_market_cap", {}).get("usd"),
+            "mcap_change_24h": d.get("market_cap_change_percentage_24h_usd"),
+        }
+    return {}
+
+
 @st.cache_data(ttl=1800)
 def get_fear_greed() -> dict:
     data = _get(_FNG_URL, params={"limit": 1})

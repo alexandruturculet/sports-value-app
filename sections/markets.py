@@ -6,13 +6,14 @@ import streamlit as st
 import streamlit.components.v1 as components
 from services.yfinance_client import get_quotes, get_signals, get_sector_performance, get_sparklines
 from services.supabase_client import get_stock_portfolio, upsert_stock_position, delete_stock_position
+from ui.components import LOSS, SIG_STYLE, WIN, section_header
 
 logger = logging.getLogger(__name__)
 
-_OVERVIEW_TICKERS = ("SPY", "QQQ", "DIA", "IWM", "VIX")
+_OVERVIEW_TICKERS = ("SPY", "QQQ", "DIA", "IWM", "^VIX")
 _OVERVIEW_NAMES = {
     "SPY": "S&P 500 ETF", "QQQ": "Nasdaq 100 ETF",
-    "DIA": "Dow Jones ETF", "IWM": "Russell 2000 ETF", "VIX": "Volatility Index",
+    "DIA": "Dow Jones ETF", "IWM": "Russell 2000 ETF", "^VIX": "Volatility Index",
 }
 
 _SECTORS = ("XLK", "XLF", "XLE", "XLV", "XLY", "XLI", "XLB", "XLP", "XLU", "XLRE")
@@ -56,14 +57,6 @@ _DEFAULT_STOCK_PORTFOLIO = [
     },
 ]
 
-_SIG_STYLE = {
-    "STRONG BUY":  ("#0d2b0d", "#4caf50", "▲▲"),
-    "BUY":         ("#0d1f0d", "#81c784", "▲"),
-    "HOLD":        ("#1a1a1a", "#9e9e9e", "—"),
-    "SELL":        ("#2b0d0d", "#ef5350", "▼"),
-    "STRONG SELL": ("#1f0d0d", "#b71c1c", "▼▼"),
-}
-
 _NEWS_URL = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY,QQQ,NVDA,AMD,TSM"
 
 
@@ -88,7 +81,7 @@ def _get_market_news() -> list:
 
 
 def _chg_badge(pct: float) -> str:
-    color = "#4caf50" if pct >= 0 else "#f44336"
+    color = WIN if pct >= 0 else LOSS
     arrow = "▲" if pct >= 0 else "▼"
     return f'<span style="color:{color};font-weight:600">{arrow} {abs(pct):.2f}%</span>'
 
@@ -107,7 +100,7 @@ def _sparkline_svg(prices: list, width: int = 80, height: int = 28) -> str:
         x = round(pad + i * x_step, 1)
         y = round(height - pad - (p - mn) / (mx - mn) * (height - pad * 2), 1)
         pts.append(f"{x},{y}")
-    color = "#2ea043" if prices[-1] >= prices[0] else "#da3633"
+    color = WIN if prices[-1] >= prices[0] else LOSS
     return (
         f'<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" '
         f'style="flex-shrink:0;overflow:visible;">'
@@ -176,7 +169,7 @@ def _render_stock_portfolio_editor(positions: list) -> None:
                 "tv_symbol": st.column_config.TextColumn("TradingView Symbol (e.g. XETR:SEC0, NASDAQ:NVDA)", width="large"),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             key="stock_portfolio_editor",
         )
 
@@ -223,9 +216,9 @@ def _stock_portfolio_card(
 
     cur_sym = {"EUR": "€", "GBP": "£"}.get(currency, "$")
     p24_val = change_pct or 0
-    border_col = "#2ea043" if p24_val > 0 else "#da3633" if p24_val < 0 else "#1e2535"
-    pnl_color = "#34D399" if (pnl or 0) >= 0 else "#F87171"
-    chg_color = "#34D399" if p24_val >= 0 else "#F87171"
+    border_col = WIN if p24_val > 0 else LOSS if p24_val < 0 else "rgba(255,255,255,0.15)"
+    pnl_color = WIN if (pnl or 0) >= 0 else LOSS
+    chg_color = WIN if p24_val >= 0 else LOSS
 
     price_str = f"{cur_sym}{current_price:,.4f}" if current_price else "—"
     value_str = f"{cur_sym}{current_value:,.2f}" if current_value else "—"
@@ -245,8 +238,7 @@ def _stock_portfolio_card(
     spark = _sparkline_svg(sparkline_prices)
 
     return (
-        f'<div style="background:#0a0a0a;border:1px solid #1c1c1c;border-left:3px solid {border_col};'
-        f'border-radius:8px;padding:11px 14px;margin-bottom:5px;">'
+        f'<div class="pf-row" style="border-left:3px solid {border_col};">'
         f'<div style="display:flex;align-items:center;gap:12px;">'
         f'<div style="flex:1;min-width:0;">'
         f'<div style="font-size:13px;font-weight:700;color:#f1f5f9;">{ticker}</div>'
@@ -264,8 +256,8 @@ def _stock_portfolio_card(
         f'<div style="font-size:9px;color:#3a3a3a;margin-top:1px;">inv: {invested_str}</div>'
         f'</div>'
         f'</div>'
-        f'<div style="margin-top:8px;height:2px;background:#1a1a1a;border-radius:1px;">'
-        f'<div style="height:2px;width:{bar_pct:.1f}%;background:#818CF8;border-radius:1px;"></div>'
+        f'<div style="margin-top:8px;height:2px;background:rgba(255,255,255,0.07);border-radius:1px;">'
+        f'<div style="height:2px;width:{bar_pct:.1f}%;background:#818CF8;border-radius:1px;box-shadow:0 0 6px #818CF8;"></div>'
         f'</div>'
         f'</div>'
     )
@@ -302,9 +294,13 @@ def _render_stock_portfolio(positions: list, quotes: dict, sparklines: dict) -> 
     tv_json = json.dumps(tv_safe)
     html = f"""<!DOCTYPE html><html><head>
 <style>
-  body{{background:#0d1117;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e0e0e0;}}
+  body{{background:transparent;margin:0;padding:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e6e9f2;}}
   [data-chart-id]{{cursor:pointer;}}
   [data-chart-id]:hover svg polyline{{opacity:0.75;}}
+  .pf-row{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+    border-radius:12px;padding:11px 14px;margin-bottom:5px;
+    transition:border-color .25s, box-shadow .25s;}}
+  .pf-row:hover{{border-color:rgba(167,139,250,0.35);box-shadow:0 0 20px rgba(124,108,240,0.12);}}
 </style></head><body>
 {cards_html}
 <script src="https://s3.tradingview.com/tv.js"></script>
@@ -353,28 +349,28 @@ def _render_data_center_stack(signals: dict, quotes: dict) -> None:
             change_pct = q.get("change_pct")
             signal = s.get("signal", "HOLD")
 
-            _, sig_color, sig_icon = _SIG_STYLE[signal]
-            chg_color = "#4caf50" if (change_pct or 0) >= 0 else "#f44336"
+            sig_bg, sig_color, sig_icon = SIG_STYLE[signal]
+            chg_color = WIN if (change_pct or 0) >= 0 else LOSS
             chg_arrow = "▲" if (change_pct or 0) >= 0 else "▼"
             price_str = f"${price:,.2f}" if price else "—"
             chg_str = f"{chg_arrow} {abs(change_pct):.1f}%" if change_pct is not None else "—"
             sig_short = signal.replace("STRONG BUY", "S.BUY").replace("STRONG SELL", "S.SELL")
 
             col.markdown(
-                f'<div style="background:#0d1117;border:1px solid #1e2535;border-top:2px solid {accent};'
-                f'border-radius:8px;padding:10px 8px;text-align:center;">'
+                f'<div class="sv-card" style="border-top:2px solid {accent};'
+                f'padding:10px 8px;text-align:center;">'
                 f'<div style="font-weight:800;font-size:13px;color:#f1f5f9;">{ticker}</div>'
-                f'<div style="font-size:11px;color:#94a3b8;margin:3px 0;">{price_str}</div>'
+                f'<div class="sv-mono" style="font-size:11px;color:#94a3b8;margin:3px 0;">{price_str}</div>'
                 f'<div style="font-size:10px;color:{chg_color};margin-bottom:5px;">{chg_str}</div>'
-                f'<span style="background:{sig_color};color:#000;font-size:8px;padding:2px 5px;'
-                f'border-radius:3px;font-weight:700;">{sig_icon} {sig_short}</span>'
+                f'<span style="background:{sig_bg};color:{sig_color};font-size:8px;padding:2px 6px;'
+                f'border-radius:10px;font-weight:700;">{sig_icon} {sig_short}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
 
 
 def render():
-    st.markdown("## 📈 Markets Dashboard")
+    section_header("📈 Markets Dashboard")
 
     # ── My Stock Portfolio ─────────────────────────────────────────────────────
     st.markdown("### My Stock Portfolio")
@@ -417,10 +413,9 @@ def render():
             pct = q["change_pct"]
             badge = _chg_badge(pct)
             col.markdown(
-                f'<div style="background:#111;border:1px solid #222;border-radius:10px;'
-                f'padding:14px;text-align:center;margin-bottom:8px">'
+                f'<div class="sv-card" style="padding:14px;text-align:center;margin-bottom:8px">'
                 f'<div style="color:#555;font-size:11px">{name}</div>'
-                f'<div style="font-size:20px;font-weight:800">{price:,.2f}</div>'
+                f'<div class="sv-mono" style="font-size:20px;font-weight:800">{price:,.2f}</div>'
                 f'<div style="font-size:13px;margin-top:4px">{badge}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -439,12 +434,13 @@ def render():
         for ticker, pct in sorted_sectors:
             name = _SECTOR_NAMES.get(ticker, ticker)
             bar_width = int(abs(pct) / max_abs * 60)
-            color = "#4caf50" if pct >= 0 else "#f44336"
+            color = WIN if pct >= 0 else LOSS
             arrow = "▲" if pct >= 0 else "▼"
             st.markdown(
                 f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">'
                 f'<div style="width:130px;color:#aaa;font-size:13px">{name}</div>'
-                f'<div style="width:{bar_width + 60}px;background:{color};height:8px;border-radius:4px;opacity:0.7"></div>'
+                f'<div style="width:{bar_width + 60}px;background:{color};height:8px;border-radius:4px;'
+                f'opacity:0.75;box-shadow:0 0 8px {color}66;"></div>'
                 f'<div style="color:{color};font-weight:600;font-size:13px">{arrow} {abs(pct):.2f}%</div>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -468,31 +464,31 @@ def render():
         if signals:
             for ticker, data in signals.items():
                 sig = data["signal"]
-                bg, color, icon = _SIG_STYLE[sig]
+                bg, color, icon = SIG_STYLE[sig]
                 rsi = data["rsi"]
                 ma_diff = data["ma_diff_pct"]
                 price = data["price"]
-                ma_color = "#4caf50" if ma_diff >= 0 else "#f44336"
+                ma_color = WIN if ma_diff >= 0 else LOSS
                 ma_sign = "+" if ma_diff >= 0 else ""
                 st.markdown(
-                    f'<div style="background:{bg};border:1px solid {color}44;border-radius:8px;'
+                    f'<div class="sv-card" style="border-color:{color}44;'
                     f'padding:12px 18px;margin-bottom:8px;display:flex;'
                     f'align-items:center;justify-content:space-between">'
                     f'<div>'
                     f'<span style="font-weight:800;font-size:16px">{ticker}</span>'
-                    f'<span style="color:#555;font-size:12px;margin-left:8px">${price:,.2f}</span>'
+                    f'<span class="sv-mono" style="color:#555;font-size:12px;margin-left:8px">${price:,.2f}</span>'
                     f'</div>'
                     f'<div style="display:flex;gap:20px;align-items:center">'
                     f'<div style="text-align:center">'
                     f'<div style="color:#888;font-size:10px">RSI-14</div>'
-                    f'<div style="font-weight:700;font-size:14px">{rsi}</div>'
+                    f'<div class="sv-mono" style="font-weight:700;font-size:14px">{rsi}</div>'
                     f'</div>'
                     f'<div style="text-align:center">'
                     f'<div style="color:#888;font-size:10px">MA5 vs MA20</div>'
-                    f'<div style="font-weight:700;font-size:14px;color:{ma_color}">{ma_sign}{ma_diff}%</div>'
+                    f'<div class="sv-mono" style="font-weight:700;font-size:14px;color:{ma_color}">{ma_sign}{ma_diff}%</div>'
                     f'</div>'
-                    f'<span style="background:{color};color:#000;font-weight:700;font-size:12px;'
-                    f'padding:4px 12px;border-radius:4px">{icon} {sig}</span>'
+                    f'<span style="background:{bg};color:{color};font-weight:700;font-size:12px;'
+                    f'padding:4px 12px;border-radius:12px">{icon} {sig}</span>'
                     f'</div></div>',
                     unsafe_allow_html=True,
                 )
@@ -507,8 +503,9 @@ def render():
     if news:
         for item in news:
             st.markdown(
-                f'<div style="border-left:3px solid #333;padding:8px 14px;margin-bottom:8px">'
-                f'<a href="{item["url"]}" target="_blank" style="color:#e0e0e0;text-decoration:none;'
+                f'<div style="border-left:3px solid #818CF8;padding:8px 14px;margin-bottom:8px;'
+                f'background:rgba(255,255,255,0.02);border-radius:0 8px 8px 0;">'
+                f'<a href="{item["url"]}" target="_blank" style="color:#e6e9f2;text-decoration:none;'
                 f'font-weight:600;font-size:14px">{item["title"]}</a>'
                 f'<div style="color:#555;font-size:11px;margin-top:3px">Yahoo Finance · {item["published"]}</div>'
                 f'</div>',

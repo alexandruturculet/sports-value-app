@@ -4,9 +4,11 @@ LEAGUE_MAP = {
     # football-data.org returns these API names; map to sidebar display names
     "Primera Division": "La Liga",
     "Primeira Liga": "Liga Portugal",
+    "FIFA World Cup": "World Cup 2026",
     # Ensure display names pass through unchanged even if used directly
     "La Liga": "La Liga",
     "Liga Portugal": "Liga Portugal",
+    "World Cup 2026": "World Cup 2026",
 }
 
 

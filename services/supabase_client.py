@@ -5,7 +5,15 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+_client = None
+_client_initialized = False
+
+
 def _get_client():
+    """Create the Supabase client once and reuse it across calls."""
+    global _client, _client_initialized
+    if _client_initialized:
+        return _client
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_KEY")
     if not url or not key:
@@ -17,13 +25,16 @@ def _get_client():
             pass
     if not url or not key:
         logger.warning("Supabase credentials not configured")
+        _client_initialized = True
         return None
     try:
         from supabase import create_client
-        return create_client(url, key)
+        _client = create_client(url, key)
     except Exception as e:
         logger.error("Failed to create Supabase client: %s", e)
-        return None
+        _client = None
+    _client_initialized = True
+    return _client
 
 
 def save_ticket(picks: list, avg_confidence: float, date_str: str) -> bool:
@@ -120,6 +131,24 @@ def get_motivation(fixture_id: int) -> dict | None:
         return None
 
 
+def get_motivations_bulk(fixture_ids: list) -> dict:
+    """Fetch motivation rows for many fixtures in ONE query. Returns {fixture_id: row}."""
+    client = _get_client()
+    if not client or not fixture_ids:
+        return {}
+    try:
+        resp = (
+            client.table("match_motivation")
+            .select("*")
+            .in_("fixture_id", fixture_ids)
+            .execute()
+        )
+        return {row["fixture_id"]: row for row in (resp.data or [])}
+    except Exception as e:
+        logger.error("Failed to bulk-fetch motivations: %s", e)
+        return {}
+
+
 def save_motivation(fixture_id: int, home: str, away: str, analysis: dict) -> bool:
     """Upsert motivation analysis for a fixture."""
     client = _get_client()
@@ -166,28 +195,39 @@ def upsert_portfolio_coin(
     staking_apy: float | None,
     staked: bool,
     tv_symbol: str | None,
+    avg_price: float | None = None,
+    target_above: float | None = None,
+    target_below: float | None = None,
 ) -> bool:
-    """Insert or update a single portfolio coin."""
+    """Insert or update a single portfolio coin.
+
+    avg_price / target_above / target_below need the SQL migration
+    (sql/migrations.sql); before it runs we retry without them.
+    """
     client = _get_client()
     if not client:
         return False
+    row = {
+        "coin_id": coin_id,
+        "symbol": symbol,
+        "qty": qty,
+        "staking_apy": staking_apy,
+        "staked": staked,
+        "tv_symbol": tv_symbol,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    extra = {"avg_price": avg_price, "target_above": target_above, "target_below": target_below}
     try:
-        client.table("portfolio").upsert(
-            {
-                "coin_id": coin_id,
-                "symbol": symbol,
-                "qty": qty,
-                "staking_apy": staking_apy,
-                "staked": staked,
-                "tv_symbol": tv_symbol,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            },
-            on_conflict="coin_id",
-        ).execute()
+        client.table("portfolio").upsert({**row, **extra}, on_conflict="coin_id").execute()
         return True
-    except Exception as e:
-        logger.error("Failed to upsert portfolio coin %s: %s", coin_id, e)
-        return False
+    except Exception:
+        try:
+            client.table("portfolio").upsert(row, on_conflict="coin_id").execute()
+            logger.warning("portfolio extra columns missing — run sql/migrations.sql to enable cost basis & alerts")
+            return True
+        except Exception as e:
+            logger.error("Failed to upsert portfolio coin %s: %s", coin_id, e)
+            return False
 
 
 def delete_portfolio_coin(coin_id: str) -> bool:
@@ -253,6 +293,61 @@ def delete_stock_position(ticker: str) -> bool:
         return True
     except Exception as e:
         logger.error("Failed to delete stock position %s: %s", ticker, e)
+        return False
+
+
+def save_portfolio_snapshot(date_str: str, total_value: float, pnl_24h: float = 0.0) -> bool:
+    """Daily snapshot of total portfolio value (one row per day, upserted).
+    Needs the portfolio_history table — see sql/migrations.sql."""
+    client = _get_client()
+    if not client or total_value <= 0:
+        return False
+    try:
+        client.table("portfolio_history").upsert(
+            {
+                "date": date_str,
+                "total_value": round(total_value, 2),
+                "pnl_24h": round(pnl_24h, 2),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="date",
+        ).execute()
+        return True
+    except Exception as e:
+        logger.warning("portfolio_history unavailable (run sql/migrations.sql): %s", e)
+        return False
+
+
+def get_portfolio_history(limit: int = 365) -> list:
+    """Daily portfolio value snapshots, oldest → newest."""
+    client = _get_client()
+    if not client:
+        return []
+    try:
+        resp = (
+            client.table("portfolio_history")
+            .select("*")
+            .order("date", desc=False)
+            .limit(limit)
+            .execute()
+        )
+        return resp.data or []
+    except Exception as e:
+        logger.warning("Failed to fetch portfolio history: %s", e)
+        return []
+
+
+def log_predictions(rows: list) -> bool:
+    """Persist ALL of today's model predictions for future backtesting.
+    Needs the predictions table — see sql/migrations.sql. Upsert on fixture_id."""
+    client = _get_client()
+    if not client or not rows:
+        return False
+    try:
+        client.table("predictions").upsert(rows, on_conflict="fixture_id").execute()
+        return True
+    except Exception as e:
+        logger.warning("predictions table unavailable (run sql/migrations.sql): %s", e)
         return False
 
 

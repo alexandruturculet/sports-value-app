@@ -1,8 +1,13 @@
+﻿"""football-data.org API — standings, matches, scorers.
+
+All functions are raw (no Streamlit cache) and thread-safe; callers cache at
+the orchestrator level (see sections/sports.py). Free tier: 10 req/min —
+keep parallelism capped via config.FOOTBALL_DATA_WORKERS.
+"""
 import requests
 import os
 import logging
 import time
-import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,21 +18,7 @@ API_KEY = os.getenv("football-data-api-key")
 
 HEADERS = {"X-Auth-Token": API_KEY}
 
-LEAGUE_CODES = {
-    "Premier League": "PL",
-    "La Liga": "PD",
-    "Serie A": "SA",
-    "Bundesliga": "BL1",
-    "Ligue 1": "FL1",
-    "Liga Portugal": "PPL",
-    "Eredivisie": "DED",
-    "Championship": "ELC",
-    "Belgian Pro League": "BJL",
-}
-
 BASE_URL = "https://api.football-data.org/v4"
-
-_SEARCH_LEAGUES = ["PL", "PD", "SA", "BL1", "FL1", "PPL", "DED"]
 
 
 def make_request(url: str, max_retries: int = 3):
@@ -66,9 +57,10 @@ def make_request(url: str, max_retries: int = 3):
     return None
 
 
-@st.cache_data(ttl=3600)
-def get_league_scorers(league_code: str) -> list:
-    """Return top scorers list for a competition (up to 100 entries)."""
+# ── Raw fetch helpers (no Streamlit cache — safe to call from worker threads) ──
+
+def fetch_league_scorers(league_code: str) -> list:
+    """Top scorers list for a competition (up to 100 entries)."""
     url = f"{BASE_URL}/competitions/{league_code}/scorers?limit=100"
     data = make_request(url)
     if not data or "scorers" not in data:
@@ -77,31 +69,7 @@ def get_league_scorers(league_code: str) -> list:
     return data["scorers"]
 
 
-def get_top_scorer_for_team(team_name: str, competition_code: str) -> tuple:
-    """Return (player_name, wiki_name, goals, assists) for the team's leading scorer."""
-    scorers = get_league_scorers(competition_code)
-    for entry in scorers:
-        if entry.get("team", {}).get("name") == team_name:
-            name = entry["player"]["name"]
-            goals = entry.get("goals", 0) or 0
-            assists = entry.get("assists", 0) or 0
-            return name, name, goals, assists
-    return None, None, 0, 0
-
-
-@st.cache_data(ttl=3600)
-def get_standings_for_leagues(leagues):
-    all_standings = {}
-    for league in leagues:
-        league_code = LEAGUE_CODES.get(league, "PL")
-        standings = get_league_standings(league_code)
-        if standings:
-            all_standings[league] = standings
-    return all_standings
-
-
-@st.cache_data(ttl=3600)
-def get_league_standings(league_code: str):
+def fetch_league_standings(league_code: str) -> list:
     url = f"{BASE_URL}/competitions/{league_code}/standings"
     data = make_request(url)
 
@@ -109,7 +77,14 @@ def get_league_standings(league_code: str):
         logger.warning("No standings data for league code: %s", league_code)
         return []
 
-    standings = data["standings"][0]["table"]
+    # Leagues return [TOTAL, HOME, AWAY]; cups (e.g. World Cup) return one
+    # TOTAL entry per group — concatenate all groups into a single table.
+    standings = [
+        team
+        for block in data["standings"]
+        if block.get("type", "TOTAL") == "TOTAL"
+        for team in block.get("table", [])
+    ]
 
     return [
         {
@@ -128,199 +103,82 @@ def get_league_standings(league_code: str):
     ]
 
 
-@st.cache_data(ttl=3600)
-def get_premier_league_standings():
-    return get_league_standings("PL")
-
-
-@st.cache_data(ttl=1800)
-def get_match_lineup(fixture_id) -> dict:
-    """Return confirmed lineup from football-data.org /matches/{id} endpoint."""
-    _empty = {"home": {"lineup": [], "bench": []}, "away": {"lineup": [], "bench": []}}
-    if not fixture_id:
-        return _empty
-    url = f"{BASE_URL}/matches/{fixture_id}"
-    data = make_request(url)
-    if not data:
-        return _empty
-    home = data.get("homeTeam", {})
-    away = data.get("awayTeam", {})
-    return {
-        "home": {"lineup": home.get("lineup", []), "bench": home.get("bench", [])},
-        "away": {"lineup": away.get("lineup", []), "bench": away.get("bench", [])},
-    }
-
-
-@st.cache_data(ttl=3600)
-def get_recent_finished_matches(competition_code: str) -> list:
-    url = f"{BASE_URL}/competitions/{competition_code}/matches?status=FINISHED&limit=20"
+def fetch_league_matches(league_code: str, date_from: str, date_to: str) -> list:
+    """Scheduled/live matches for a competition within a date window."""
+    url = f"{BASE_URL}/competitions/{league_code}/matches?dateFrom={date_from}&dateTo={date_to}"
     data = make_request(url)
     if not data or "matches" not in data:
         return []
-    return data["matches"]
+    return [
+        m for m in data["matches"]
+        if m["status"] in ("SCHEDULED", "TIMED", "IN_PLAY", "LIVE")
+    ]
 
 
-@st.cache_data(ttl=3600)
-def get_last_team_lineup(team_name: str, competition_code: str) -> dict:
-    """Last confirmed lineup for a team — exactly ONE get_match_lineup call."""
-    _empty = {"lineup": [], "bench": []}
-    finished = get_recent_finished_matches(competition_code)
-    for match in reversed(finished):
-        home = match["homeTeam"]["name"]
-        away = match["awayTeam"]["name"]
-        if home != team_name and away != team_name:
+def fetch_live_matches(league_codes: tuple) -> list:
+    """Currently in-play matches across competitions — ONE request.
+    /matches defaults to today's window; we filter live statuses client-side."""
+    codes = ",".join(league_codes)
+    data = make_request(f"{BASE_URL}/matches?competitions={codes}")
+    if not data or "matches" not in data:
+        return []
+    out = []
+    for m in data["matches"]:
+        if m.get("status") not in ("IN_PLAY", "PAUSED", "LIVE"):
             continue
-        fid = match.get("id")
-        if not fid:
+        score = m.get("score", {}).get("fullTime", {})
+        out.append({
+            "home": m["homeTeam"]["name"],
+            "away": m["awayTeam"]["name"],
+            "home_crest": m["homeTeam"].get("crest", ""),
+            "away_crest": m["awayTeam"].get("crest", ""),
+            "home_goals": score.get("home") if score.get("home") is not None else 0,
+            "away_goals": score.get("away") if score.get("away") is not None else 0,
+            "minute": m.get("minute"),
+            "status": m.get("status", ""),
+        })
+    return out
+
+
+def fetch_h2h(fixture_id: int, limit: int = 5) -> list:
+    """Past head-to-head meetings for a fixture (football-data /head2head)."""
+    data = make_request(f"{BASE_URL}/matches/{fixture_id}/head2head?limit={limit}")
+    if not data or "matches" not in data:
+        return []
+    out = []
+    for m in data["matches"]:
+        if m.get("status") != "FINISHED":
             continue
-        detail = get_match_lineup(fid)
-        side = "home" if home == team_name else "away"
-        return detail.get(side, _empty)  # return immediately — no loop over all matches
-    return _empty
+        score = m.get("score", {}).get("fullTime", {})
+        out.append({
+            "date": (m.get("utcDate") or "")[:10],
+            "home": m["homeTeam"]["name"],
+            "away": m["awayTeam"]["name"],
+            "home_goals": score.get("home"),
+            "away_goals": score.get("away"),
+            "competition": m.get("competition", {}).get("name", ""),
+        })
+    return out
 
 
-@st.cache_data(ttl=3600)
-def get_team_form(team_name: str):
-    for league_code in _SEARCH_LEAGUES:
-        url = f"{BASE_URL}/competitions/{league_code}/matches?status=FINISHED&limit=100"
-        data = make_request(url)
-
-        if not data or "matches" not in data:
-            continue
-
-        wins = 0
-        match_count = 0
-
-        for match in data["matches"]:
-            home = match["homeTeam"]["name"]
-            away = match["awayTeam"]["name"]
-
-            if home == team_name or away == team_name:
-                match_count += 1
-                if match_count > 5:
-                    break
-
-                home_goals = match["score"]["fullTime"]["home"]
-                away_goals = match["score"]["fullTime"]["away"]
-
-                if home == team_name and home_goals > away_goals:
-                    wins += 1
-                elif away == team_name and away_goals > home_goals:
-                    wins += 1
-
-        if match_count > 0:
-            return wins
-
-    return 0
+def fetch_match_score(fixture_id: int) -> tuple[int, int] | None:
+    """Returns (home_goals, away_goals) if finished, else None."""
+    data = make_request(f"{BASE_URL}/matches/{fixture_id}")
+    if not data or data.get("status") != "FINISHED":
+        return None
+    score = data.get("score", {}).get("fullTime", {})
+    h, a = score.get("home"), score.get("away")
+    if h is None or a is None:
+        return None
+    return (int(h), int(a))
 
 
-@st.cache_data(ttl=900)
-def get_team_goals(team_name: str):
-    for league_code in _SEARCH_LEAGUES:
-        url = f"{BASE_URL}/competitions/{league_code}/teams"
-        data = make_request(url)
-
-        if not data or "teams" not in data:
-            continue
-
-        for team in data["teams"]:
-            if team["name"] == team_name:
-                team_id = team["id"]
-                matches_url = f"{BASE_URL}/teams/{team_id}/matches?status=FINISHED&limit=100"
-                matches_data = make_request(matches_url)
-
-                if not matches_data or "matches" not in matches_data:
-                    return (0, 0)
-
-                goals_for = 0
-                goals_against = 0
-
-                for match in matches_data["matches"]:
-                    home_goals = match["score"]["fullTime"]["home"]
-                    away_goals = match["score"]["fullTime"]["away"]
-
-                    if match["homeTeam"]["id"] == team_id:
-                        goals_for += home_goals
-                        goals_against += away_goals
-                    else:
-                        goals_for += away_goals
-                        goals_against += home_goals
-
-                return (goals_for, goals_against)
-
-    return (0, 0)
-
-
-@st.cache_data(ttl=900)
-def get_team_last5_form(team_name: str):
-    for league_code in _SEARCH_LEAGUES:
-        url = f"{BASE_URL}/competitions/{league_code}/matches?status=FINISHED&limit=100"
-        data = make_request(url)
-
-        if not data or "matches" not in data:
-            continue
-
-        match_count = 0
-        results = []
-
-        for match in data["matches"]:
-            home = match["homeTeam"]["name"]
-            away = match["awayTeam"]["name"]
-
-            if home == team_name or away == team_name:
-                match_count += 1
-                if match_count > 5:
-                    break
-
-                home_goals = match["score"]["fullTime"]["home"]
-                away_goals = match["score"]["fullTime"]["away"]
-
-                if home == team_name:
-                    if home_goals > away_goals:
-                        results.append("W")
-                    elif home_goals == away_goals:
-                        results.append("D")
-                    else:
-                        results.append("L")
-                else:
-                    if away_goals > home_goals:
-                        results.append("W")
-                    elif away_goals == home_goals:
-                        results.append("D")
-                    else:
-                        results.append("L")
-
-        if match_count >= 5:
-            return "-".join(results)
-
-    return "N/A"
-
-
-@st.cache_data(ttl=900)
-def get_h2h_matches(home_team_name: str, away_team_name: str):
-    h2h_matches = []
-
-    for league_code in _SEARCH_LEAGUES:
-        url = f"{BASE_URL}/competitions/{league_code}/matches?status=FINISHED&limit=200"
-        data = make_request(url)
-
-        if not data or "matches" not in data:
-            continue
-
-        for match in data["matches"]:
-            home = match["homeTeam"]["name"]
-            away = match["awayTeam"]["name"]
-
-            if (home == home_team_name and away == away_team_name) or \
-               (home == away_team_name and away == home_team_name):
-                h2h_matches.append({
-                    "home": home,
-                    "away": away,
-                    "home_goals": match["score"]["fullTime"]["home"],
-                    "away_goals": match["score"]["fullTime"]["away"],
-                })
-
-        if len(h2h_matches) >= 5:
-            break
-
-    return h2h_matches[:5]
+def top_scorer_from_list(scorers: list, team_name: str) -> tuple:
+    """Return (player_name, wiki_name, goals, assists) for the team's leading scorer."""
+    for entry in scorers:
+        if entry.get("team", {}).get("name") == team_name:
+            name = entry["player"]["name"]
+            goals = entry.get("goals", 0) or 0
+            assists = entry.get("assists", 0) or 0
+            return name, name, goals, assists
+    return None, None, 0, 0

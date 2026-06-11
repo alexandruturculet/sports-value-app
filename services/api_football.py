@@ -6,16 +6,17 @@ import urllib.parse
 import streamlit as st
 from dotenv import load_dotenv
 
+from config import API_FOOTBALL_IDS, CUP_CODES
+from services._memo import TTLMemo
+
 load_dotenv()
+
+_memo = TTLMemo()
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://v3.football.api-sports.io"
 
-_LEAGUE_IDS = {
-    "PL": 39, "PD": 140, "SA": 135, "BL1": 78,
-    "FL1": 61, "PPL": 94, "DED": 88, "ELC": 40, "BJL": 144,
-}
 
 def _current_season() -> int:
     from datetime import date
@@ -81,22 +82,33 @@ def _names_match(n1: str, n2: str) -> bool:
     return a == b or a in b or b in a
 
 
-@st.cache_data(ttl=3600)
+# ── Raw fixture/injury helpers (no Streamlit cache — thread-safe) ──────────────
+# Callers cache at the batch level (see sections/sports.py).
+
 def get_fixtures_for_date(date_str: str) -> list:
     """All API-Football fixtures for a date (global, no league filter)."""
-    data = _get(f"{BASE_URL}/fixtures?date={date_str}")
-    return data.get("response", [])
+    return _memo.get_or_set(
+        ("fixtures", date_str), 3600,
+        lambda: _get(f"{BASE_URL}/fixtures?date={date_str}").get("response", []),
+    )
 
 
-@st.cache_data(ttl=3600)
 def get_fixtures_for_date_league(date_str: str, competition_code: str) -> list:
     """API-Football fixtures filtered by league — fewer results, better matching."""
-    league_id = _LEAGUE_IDS.get(competition_code)
+    league_id = API_FOOTBALL_IDS.get(competition_code)
     if not league_id:
         return get_fixtures_for_date(date_str)
-    season = _current_season()
-    data = _get(f"{BASE_URL}/fixtures?date={date_str}&league={league_id}&season={season}")
-    return data.get("response", [])
+    # Cups (World Cup): season == calendar year of the fixture, not season-start year
+    if competition_code in CUP_CODES and len(date_str) >= 4 and date_str[:4].isdigit():
+        season = int(date_str[:4])
+    else:
+        season = _current_season()
+    return _memo.get_or_set(
+        ("fixtures", date_str, league_id), 3600,
+        lambda: _get(
+            f"{BASE_URL}/fixtures?date={date_str}&league={league_id}&season={season}"
+        ).get("response", []),
+    )
 
 
 def find_api_fixture_id(home_team: str, away_team: str, date_str: str,
@@ -116,7 +128,6 @@ def find_api_fixture_id(home_team: str, away_team: str, date_str: str,
     return None
 
 
-@st.cache_data(ttl=1800)
 def get_fixture_injuries(home_team: str, away_team: str, date_str: str,
                          competition_code: str = "") -> dict:
     """Return {"home": [...], "away": [...]} absent-player lists for a fixture."""
@@ -142,75 +153,6 @@ def get_fixture_injuries(home_team: str, away_team: str, date_str: str,
     return {"home": home_out, "away": away_out}
 
 
-_API_POS_MAP = {"G": "Goalkeeper", "D": "Defender", "M": "Midfielder", "F": "Forward"}
-
-
-def _parse_api_lineup(team_data: dict) -> dict:
-    def _p(entry):
-        pl = entry.get("player", {})
-        return {
-            "name": pl.get("name", ""),
-            "shirtNumber": pl.get("number") or "",
-            "position": _API_POS_MAP.get((pl.get("pos") or "").upper(), ""),
-        }
-    return {
-        "lineup": [_p(e) for e in team_data.get("startXI", [])],
-        "bench": [_p(e) for e in team_data.get("substitutes", [])],
-    }
-
-
-@st.cache_data(ttl=1800)
-def get_lineups_for_fixture(home_team: str, away_team: str, date_str: str) -> dict:
-    """Confirmed lineup + team IDs from API-Football for a fixture."""
-    _empty = {
-        "home": {"lineup": [], "bench": []},
-        "away": {"lineup": [], "bench": []},
-        "home_id": None,
-        "away_id": None,
-    }
-    fixture_row = None
-    for f in get_fixtures_for_date(date_str):
-        t = f.get("teams", {})
-        if (_names_match(home_team, t.get("home", {}).get("name", "")) and
-                _names_match(away_team, t.get("away", {}).get("name", ""))):
-            fixture_row = f
-            break
-    if not fixture_row:
-        return _empty
-
-    home_id = fixture_row["teams"]["home"]["id"]
-    away_id = fixture_row["teams"]["away"]["id"]
-    fixture_id = fixture_row["fixture"]["id"]
-
-    result = {
-        "home": {"lineup": [], "bench": []},
-        "away": {"lineup": [], "bench": []},
-        "home_id": home_id,
-        "away_id": away_id,
-    }
-    data = _get(f"{BASE_URL}/fixtures/lineups?fixture={fixture_id}")
-    for td in data.get("response", []):
-        side = "home" if td.get("team", {}).get("id") == home_id else "away"
-        result[side] = _parse_api_lineup(td)
-    return result
-
-
-@st.cache_data(ttl=86400)
-def get_last_match_lineup_for_team(team_id: int) -> dict:
-    """Last match lineup for a team from API-Football."""
-    _empty = {"lineup": [], "bench": []}
-    data = _get(f"{BASE_URL}/fixtures?team={team_id}&last=1")
-    fixtures = data.get("response", [])
-    if not fixtures:
-        return _empty
-    last_fid = fixtures[0]["fixture"]["id"]
-    lineup_data = _get(f"{BASE_URL}/fixtures/lineups?fixture={last_fid}")
-    for td in lineup_data.get("response", []):
-        if td.get("team", {}).get("id") == team_id:
-            return _parse_api_lineup(td)
-    return _empty
-
-
 # ── Stubs kept for context_engine compatibility ───────────────────────────────
 
 def get_lineups(team_name: str, fixture_id) -> dict:
@@ -221,9 +163,9 @@ def get_injuries(team_name: str) -> list:
     return []
 
 
-# ── Season stats (cards + corners) ───────────────────────────────────────────
+# ── Season stats (cards + corners) — main-thread only, button-gated ───────────
 
-@st.cache_data(ttl=604800)
+@st.cache_data(ttl=604800, show_spinner=False)
 def _get_team_id(team_name: str, competition_code: str) -> int | None:
     normalized = _normalize(team_name).title()
     # Search globally (no league filter) — more reliable across all name formats
@@ -236,13 +178,13 @@ def _get_team_id(team_name: str, competition_code: str) -> int | None:
     return None
 
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner=False)
 def get_team_season_stats(team_name: str, competition_code: str) -> dict:
     """Season avg yellow/red cards + avg corners FT (last 10 matches). Returns {} on failure."""
     team_id = _get_team_id(team_name, competition_code)
     if not team_id:
         return {}
-    league_id = _LEAGUE_IDS.get(competition_code)
+    league_id = API_FOOTBALL_IDS.get(competition_code)
     season = _current_season()
 
     result = {}

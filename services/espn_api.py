@@ -1,17 +1,20 @@
+"""ESPN site API — lineups & injuries. No API key required.
+
+All functions here are raw (no Streamlit cache) so they can run inside
+worker threads. Callers cache at the batch level (see sections/sports.py).
+"""
 import re
 import logging
 import requests
-import streamlit as st
 from datetime import datetime, timedelta, timezone
+
+from config import ESPN_SLUGS
+from services._memo import TTLMemo
 
 logger = logging.getLogger(__name__)
 
 _BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
-
-_SLUGS = {
-    "PL": "eng.1", "PD": "esp.1", "SA": "ita.1", "BL1": "ger.1",
-    "FL1": "fra.1", "PPL": "por.1", "DED": "ned.1", "ELC": "eng.2", "BJL": "bel.1",
-}
+_memo = TTLMemo()
 
 
 def _get(url: str) -> dict:
@@ -35,14 +38,18 @@ def _match(a: str, b: str) -> bool:
     return x == y or x in y or y in x
 
 
-@st.cache_data(ttl=86400)
 def _scoreboard(slug: str, ymd: str) -> list:
-    return _get(f"{_BASE}/{slug}/scoreboard?dates={ymd}").get("events", [])
+    return _memo.get_or_set(
+        ("scoreboard", slug, ymd), 1800,
+        lambda: _get(f"{_BASE}/{slug}/scoreboard?dates={ymd}").get("events", []),
+    )
 
 
-@st.cache_data(ttl=1800)
 def _summary(slug: str, event_id: str) -> dict:
-    return _get(f"{_BASE}/{slug}/summary?event={event_id}")
+    return _memo.get_or_set(
+        ("summary", slug, event_id), 1800,
+        lambda: _get(f"{_BASE}/{slug}/summary?event={event_id}"),
+    )
 
 
 _ESPN_POS_MAP = {
@@ -78,11 +85,10 @@ def _parse_roster(roster_entry: dict) -> dict:
     return {"lineup": lineup, "bench": bench}
 
 
-@st.cache_data(ttl=1800)
 def get_espn_lineups(home_team: str, away_team: str, league_code: str, date_str: str) -> dict:
-    """Confirmed lineup from ESPN for a fixture. No API key required."""
+    """Confirmed lineup from ESPN for a fixture."""
     _empty = {"home": {"lineup": [], "bench": []}, "away": {"lineup": [], "bench": []}}
-    slug = _SLUGS.get(league_code)
+    slug = ESPN_SLUGS.get(league_code)
     if not slug:
         return _empty
     ymd = date_str.replace("-", "")
@@ -103,9 +109,12 @@ def get_espn_lineups(home_team: str, away_team: str, league_code: str, date_str:
     return _empty
 
 
-@st.cache_data(ttl=1800)
 def _espn_league_injuries(slug: str) -> list:
     """All current injuries for a league — powers espn.com/soccer/injuries page."""
+    return _memo.get_or_set(("league_inj", slug), 1800, lambda: _espn_league_injuries_raw(slug))
+
+
+def _espn_league_injuries_raw(slug: str) -> list:
     data = _get(f"{_BASE}/{slug}/injuries")
     out = []
     # Structure A: flat list under "injuries"
@@ -140,11 +149,10 @@ def _espn_league_injuries(slug: str) -> list:
     return out
 
 
-@st.cache_data(ttl=1800)
 def get_espn_injuries(home_team: str, away_team: str, league_code: str, date_str: str) -> dict:
     """Fetch absent/injured players via ESPN: league list → roster flags → per-team endpoint."""
     _empty = {"home": [], "away": []}
-    slug = _SLUGS.get(league_code)
+    slug = ESPN_SLUGS.get(league_code)
     if not slug:
         return _empty
 
@@ -230,15 +238,14 @@ def get_espn_injuries(home_team: str, away_team: str, league_code: str, date_str
     }
 
 
-@st.cache_data(ttl=86400)
 def get_espn_last_lineup(team_name: str, league_code: str) -> dict:
     """Probable XI from team's most recent match via ESPN (looks back up to 7 days)."""
     _empty = {"lineup": [], "bench": []}
-    slug = _SLUGS.get(league_code)
+    slug = ESPN_SLUGS.get(league_code)
     if not slug:
         return _empty
     today = datetime.now(timezone.utc).date()
-    for days_back in range(1, 15):
+    for days_back in range(1, 8):
         ymd = (today - timedelta(days=days_back)).strftime("%Y%m%d")
         for event in _scoreboard(slug, ymd):
             comps = event.get("competitions", [{}])

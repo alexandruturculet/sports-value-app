@@ -1,6 +1,7 @@
 import logging
 import time
-from services.football_api import get_standings_for_leagues
+from config import LEAGUE_CODES
+from services.football_api import fetch_league_standings
 from models.v7.team_resolver import resolve_team
 
 logger = logging.getLogger(__name__)
@@ -8,6 +9,27 @@ logger = logging.getLogger(__name__)
 # TTL-aware cache: {key: (data, expires_at)}
 _CACHE_TTL = 3600
 _cache: dict = {}
+
+# League standings injected by the caller (sections/sports.py) so predictions
+# reuse already-fetched tables instead of re-hitting football-data.org.
+_league_tables: dict = {}
+
+
+def set_league_standings(league: str, table: list) -> None:
+    _league_tables[league] = table
+
+
+def _get_table(league: str) -> list:
+    table = _league_tables.get(league)
+    if table:
+        return table
+    code = LEAGUE_CODES.get(league)
+    if not code:
+        return []
+    table = fetch_league_standings(code)
+    if table:
+        _league_tables[league] = table
+    return table
 
 
 def _cache_get(key: str):
@@ -37,12 +59,10 @@ def fetch_team_stats(team_name: str, league: str) -> dict:
         return cached
 
     try:
-        standings = get_standings_for_leagues([league])
+        table = _get_table(league)
     except Exception as e:
         logger.exception("Failed to fetch standings for %s: %s", league, e)
         return _fallback(team_name)
-
-    table = standings.get(league, [])
 
     for team in table:
         if not isinstance(team, dict) or "team" not in team:
